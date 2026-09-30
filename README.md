@@ -4,7 +4,8 @@
 > the stock-based HiBy R1 Audiobook Mod. See
 > [AUDIOBOOK_EDITION.md](AUDIOBOOK_EDITION.md) for its goals, fork-specific
 > changes, upstream relationship, and release status. The original Sonix Player
-> documentation continues below.
+> documentation continues below. Developers can automate an ADB-enabled R1 with
+> the local test interface described in [DEVICE_TESTING.md](DEVICE_TESTING.md).
 
 A replacement player for the **HiBy R3 Pro II** and the **HiBy R1**, written on
 LVGL.

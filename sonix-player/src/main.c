@@ -32,6 +32,7 @@
 #include "src/system/bluetooth/bluetooth.h"
 #include "src/system/bluetooth/btplayer.h"
 #include "src/system/device/clock.h"
+#include "src/system/device/devcontrol.h"
 #include "src/system/device/factoryreset.h"
 #include "src/system/core/config.h"
 #include "src/system/core/lang.h"
@@ -2272,6 +2273,11 @@ int main(int argc, char **argv) {
 	powersettings_apply();
 	settings_apply_screen_off();
 
+	// Local UI automation for device validation. This is a root-only FIFO, not
+	// a network service; the main poll loop below services it without a timer or
+	// worker thread, and its virtual pointer leaves the real touchscreen alone.
+	devcontrol_init(disp, panel_w, panel_h);
+
 #ifndef HOST_BUILD
 	// Bluetooth off. A firmware whose /etc/init.d/S80_bt_init has not been
 	// replaced powers the radio up at every boot -- rfkill on, patchram,
@@ -2319,11 +2325,19 @@ int main(int argc, char **argv) {
 			time_till_next = MAIN_LOOP_MAX_SLEEP_MS; // also catches LV_NO_TIMER_READY
 		}
 
-		struct pollfd wake = {.fd = gui_post_wake_fd(), .events = POLLIN};
-		if (poll(&wake, 1, (int)time_till_next) > 0) {
-			// Something was posted: drain the queue now instead of waiting
-			// for the bridge's own timer to come round.
-			gui_post_service();
+		struct pollfd wake[2] = {
+			{.fd = gui_post_wake_fd(), .events = POLLIN},
+			{.fd = devcontrol_fd(), .events = POLLIN},
+		};
+		if (poll(wake, 2, (int)time_till_next) > 0) {
+			if (wake[0].revents & POLLIN) {
+				// Something was posted: drain the queue now instead of waiting
+				// for the bridge's own timer to come round.
+				gui_post_service();
+			}
+			if (wake[1].revents & POLLIN) {
+				devcontrol_service();
+			}
 		}
 	}
 
