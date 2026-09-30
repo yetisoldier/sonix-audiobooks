@@ -1,4 +1,6 @@
 .DS_Store
+build/
+.host-test/
 
 sonix-player/sonix_player
 sonix-player/sonix_player_debug

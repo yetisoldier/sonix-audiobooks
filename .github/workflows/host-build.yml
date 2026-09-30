@@ -1,0 +1,36 @@
+name: Host build
+
+on:
+  push:
+    branches: [main, "codex/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: sonix-player
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential git pkg-config libsdl2-dev libfreetype-dev \
+            libopusfile-dev libwavpack-dev libasound2-dev \
+            ffmpeg sqlite3 xvfb xdotool scrot
+      - name: Exercise audiobook catalog and resume
+        working-directory: .
+        run: tools/audiobook-host-smoke.sh
+      - name: Upload smoke-test screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audiobook-host-smoke
+          path: build/audiobook-host-smoke
+          if-no-files-found: ignore
