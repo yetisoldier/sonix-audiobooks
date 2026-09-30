@@ -103,6 +103,11 @@ long alsa_volume_gain_db100(int percent);
 // It has no caller; see the note in alsa-controls.c.
 void alsa_controls_reapply(void);
 
+// R3 Pro II suspend pop suppression. The DAC is muted before the analogue
+// route is parked and restored only after the real route is live again.
+void alsa_suspend_mute(void);
+void alsa_suspend_restore(void);
+
 
 // The hardware control is an attenuation: 0 is loudest, 255 is silent. Nothing
 // outside this file should have to know that, so the UI and the key handlers

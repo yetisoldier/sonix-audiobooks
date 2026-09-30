@@ -72,7 +72,7 @@ void powersettings_apply(void) {
 	if (axpcharge_applies()) {
 		power_set_charge_limit(100);
 		axpcharge_set(config_get_bool("power", "charge_limit_80", false),
-					  config_get_bool("power", "charge_500ma", false));
+					  config_get_bool("power", "charge_500ma", true));
 	} else {
 		power_set_charge_limit(CHARGE_LIMIT_MIN + (charge_index() * CHARGE_LIMIT_STEP));
 	}
@@ -96,7 +96,7 @@ static void refresh_labels(void) {
 	}
 	if (axp_limit_switch) {
 		set_checked(axp_limit_switch, config_get_bool("power", "charge_limit_80", false));
-		set_checked(axp_current_switch, config_get_bool("power", "charge_500ma", false));
+		set_checked(axp_current_switch, config_get_bool("power", "charge_500ma", true));
 	}
 	lv_label_set_text(auto_off_value, tr(AUTO_OFF[auto_off_index()].label));
 

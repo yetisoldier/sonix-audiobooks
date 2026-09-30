@@ -143,7 +143,9 @@ certificate checking, and HLS.
   > Pictures need to be exactly 480x720 jpegs non progressive.
 
 - **Power** - standby, LED behaviour, automatic power-off from thirty seconds to
-  six hours, and a charge limit from 80 to 100 %.
+  six hours, and battery charge controls. On the R1, the AXP2101 battery charge
+  current is capped at 500 mA by default; this is independent of its optional
+  approximate 80% voltage limit and does not change battery-percentage updates.
 - **Date and time** - set by hand and written to the RTC, 24-hour clock, and a
   time zone with its own standard and daylight choice.
 - **Language** - English, Italiano, Deutsch, Español, Français, Russian, Chinese,

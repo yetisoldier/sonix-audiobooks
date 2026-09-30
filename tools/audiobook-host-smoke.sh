@@ -134,6 +134,9 @@ cat >"$CONFIG" <<EOF
 playback_mode = 0
 volume = 40
 
+[audio]
+gapless = 1
+
 [ui]
 language = English
 
@@ -153,7 +156,7 @@ ctl.!default {
 }
 EOF
 
-ffmpeg -hide_banner -loglevel error -f lavfi -i "sine=frequency=440:duration=60" \
+ffmpeg -hide_banner -loglevel error -f lavfi -i "sine=frequency=440:duration=16" \
 	-ac 1 -b:a 64k -metadata album="Book One" -metadata album_artist="Test Author" \
 	-metadata artist="Test Author" -metadata title="Part One" -metadata track="1/2" \
 	"$SD/Audiobooks/Test Author/Series One/Book One/01 - Part One.mp3"
@@ -214,7 +217,15 @@ wait_for "direct resume after restart" 100 grep -Eq \
 	"play requested '.*01 - Part One\\.mp3' from [1-9][0-9]*(\\.[0-9]+)? s" "$WORK/resume-run.log"
 screenshot resumed
 
+# Part one has only a few seconds left after the restored position. Its natural
+# end must wake the queue immediately and start part two; the old 500 ms UI poll
+# raced the 600 ms gapless hold and regularly lost that handoff for MP3.
+wait_for "event-driven multipart auto-advance" 100 grep -q "starting '.*02 - Part Two.mp3'" "$WORK/resume-run.log"
+grep -q "gapless: reusing the open PCM" "$WORK/resume-run.log" || \
+	fail "multipart MP3 advanced, but the gapless PCM was closed between parts"
+
 printf 'Audiobook host smoke test passed.\n'
 printf '  Books: 2 (one multipart MP3, one M4B)\n'
 printf '  Resume: %s at %s seconds\n' "$RESUME_FILE" "$RESUME_POSITION"
+printf '  Auto-advance: multipart MP3 part one -> part two\n'
 printf '  Artifacts: %s\n' "$WORK"

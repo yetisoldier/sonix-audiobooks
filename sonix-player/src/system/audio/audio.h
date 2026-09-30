@@ -23,6 +23,12 @@ typedef enum {
 	AUDIO_STATUS_PAUSED,
 } audio_status_t;
 
+// Called from the playback thread as soon as a track reaches its natural end.
+// The callback must return quickly and must not touch LVGL; the GUI uses it only
+// to post the queue advance onto its own thread. The completion remains latched
+// for audio_take_completion(), so the normal progress poll is still a fallback.
+typedef void (*audio_completion_cb_t)(void);
+
 int audio_init();
 
 // Closes any currently playing file first.
@@ -132,6 +138,7 @@ audio_status_t audio_get_status(void);
 // (audio_stop/audio_play) do NOT set it. Lets the controller distinguish a
 // natural track completion (auto-advance) from a deliberate stop.
 bool audio_take_completion(void);
+void audio_set_completion_callback(audio_completion_cb_t cb);
 
 // Empty string when nothing is loaded.
 void audio_get_current_file(char *out, size_t out_size);

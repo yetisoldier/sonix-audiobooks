@@ -256,6 +256,7 @@ static double restart_fresh_pos;
 void audio_force_output_reinit_after_resume(void) {
 	// No HBC3000 on the CS43131 board: nothing went down, nothing to re-init.
 	if (alsa_board_is_cs43131()) {
+		alsa_suspend_restore();
 		return;
 	}
 	// 1 = 3.5 mm line out, 2 = 3.5 mm headphone, 3 = 4.4 mm balanced.
@@ -273,6 +274,7 @@ void audio_force_output_reinit_after_resume(void) {
 	// again with a stream already coming.
 	alsa_controls_note_output(x);
 #endif
+	alsa_suspend_restore();
 }
 
 // The pop into the headphones as the R3 Pro II goes into mem.
@@ -301,6 +303,10 @@ void audio_park_output_before_suspend(void) {
 		return; // not one of the analogue sockets
 	}
 	int y = output_reinit_partner(x);
+	// The route transition mutes the old analogue port, but the DAC feeding the
+	// shared path was still live when its rail fell. Mute it first and leave it
+	// muted until the wake has rebuilt the real route.
+	alsa_suspend_mute();
 	// The balanced line-out flag with it: on the 4.4 mm socket headphone and
 	// line out are the same route, and a report of a pop has to say which.
 	fprintf(stderr, "audio: output parked on %d before mem (was %d, balanced line out %d)\n", y, x, alsa_output_key() & 1);
@@ -428,6 +434,13 @@ static bool seek_request = false;
 // opposed to being stopped/replaced by the user). Consumed via
 // audio_take_completion() so the controller can auto-advance.
 static bool track_completed = false;
+static audio_completion_cb_t completion_cb;
+
+void audio_set_completion_callback(audio_completion_cb_t cb) {
+	pthread_mutex_lock(&audio_mutex);
+	completion_cb = cb;
+	pthread_mutex_unlock(&audio_mutex);
+}
 
 // Marks the end of a track's playback routine. The catch is that tearing down
 // the old track happens *after* audio_play() has already announced the new one
@@ -2725,13 +2738,20 @@ static void play_wav_file(const char *filepath) {
 			//
 			// It happens with tracks played while still downloading:
 			// abandoning the download makes the read in flight return empty.
+			audio_completion_cb_t notify = NULL;
 			pthread_mutex_lock(&audio_mutex);
 			bool natural_end = audio_command != AUDIO_CMD_STOP && !play_request;
 			audio_command = AUDIO_CMD_STOP;
 			playback_status = AUDIO_STATUS_STOPPED;
 			track_completed = natural_end;
+			if (natural_end) {
+				notify = completion_cb;
+			}
 			pthread_mutex_unlock(&audio_mutex);
 			played_to_the_end = natural_end;
+			if (notify) {
+				notify();
+			}
 			break;
 		}
 
@@ -3465,13 +3485,25 @@ static void play_decoded_file(const char *filepath, decode_format_t format) {
 			uint64_t reached = (uint64_t)(bytes_played / frame_bytes);
 			bool cut_short = declared > 0 && sample_rate > 0 && reached + (uint64_t)sample_rate < declared;
 
+			audio_completion_cb_t notify = NULL;
 			pthread_mutex_lock(&audio_mutex);
 			bool natural_end = audio_command != AUDIO_CMD_STOP && !play_request && !cut_short;
 			audio_command = AUDIO_CMD_STOP;
 			playback_status = AUDIO_STATUS_STOPPED;
 			track_completed = natural_end;
+			if (natural_end) {
+				notify = completion_cb;
+			}
 			pthread_mutex_unlock(&audio_mutex);
 			played_to_the_end = natural_end;
+
+			// Wake the controller now, while the tail is still in ALSA's queue.
+			// Waiting for the 500 ms progress timer left only about 100 ms of the
+			// gapless hold for metadata and decoder startup, which MP3 regularly
+			// exceeded. The latched flag above remains the source of truth.
+			if (notify) {
+				notify();
+			}
 
 			if (cut_short) {
 				fprintf(stderr, "audio[%ld]: '%s' stopped at %.1f s of %.1f: cut short, the queue stays put\n", log_ms(),

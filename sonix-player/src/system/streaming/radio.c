@@ -1,3 +1,5 @@
+#define _GNU_SOURCE 1
+
 #include "radio.h"
 
 #include <errno.h>

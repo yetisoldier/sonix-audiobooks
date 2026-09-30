@@ -1726,6 +1726,17 @@ static bool connect_device(const char *mac) {
 	return ok;
 }
 
+static bool device_is_paired(const char *mac) {
+	btstack_device_t devices[BT_MAX_DEVICES];
+	int count = btstack_devices(devices, BT_MAX_DEVICES);
+	for (int i = 0; i < count; i++) {
+		if (devices[i].paired && strcasecmp(devices[i].address, mac) == 0) {
+			return true;
+		}
+	}
+	return false;
+}
+
 static bool pair_and_connect(const char *mac) {
 	// bluez must currently know this address. It ages a merely-seen device out
 	// after thirty seconds, and between the sweep finishing, the list being
@@ -1750,9 +1761,26 @@ static bool pair_and_connect(const char *mac) {
 	btstack_discovery(false);
 
 	fprintf(stderr, "bluetooth: pairing %s\n", mac);
-	if (!btstack_pair(mac, PAIR_TIMEOUT_MS)) {
-		fprintf(stderr, "bluetooth: %s would not pair\n", mac);
-		return false;
+	bool paired = btstack_pair(mac, PAIR_TIMEOUT_MS);
+	if (!paired) {
+		// Some earbuds complete the bond and then close the setup link before
+		// BlueZ receives the successful Pair reply. Device1.Pair consequently
+		// reports a timeout/failure even though Device1.Paired has become true;
+		// after the next Bluetooth restart the saved bond appears and the UI
+		// looks self-contradictory. Reconcile against BlueZ's durable state
+		// before calling the operation a failure.
+		for (int waited = 0; waited <= 2000 && !paired; waited += 100) {
+			paired = device_is_paired(mac);
+			if (!paired && waited < 2000) {
+				sleep_ms(100);
+			}
+		}
+		if (paired) {
+			fprintf(stderr, "bluetooth: %s saved the bond despite Pair reporting failure; continuing\n", mac);
+		} else {
+			fprintf(stderr, "bluetooth: %s would not pair\n", mac);
+			return false;
+		}
 	}
 
 	// Trusted only for a device the user chose explicitly, which is exactly what

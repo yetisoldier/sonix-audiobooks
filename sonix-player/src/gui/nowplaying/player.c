@@ -2974,6 +2974,20 @@ static void handle_track_finished(void) {
 	}
 }
 
+static void track_finished_posted(void *unused) {
+	(void)unused;
+	if (device_state_take_completion()) {
+		handle_track_finished();
+	}
+}
+
+// Playback reaches EOF on its own thread. Ring the GUI doorbell instead of
+// waiting up to half a second for the progress timer; track_finished_posted()
+// is then run on the only thread allowed to touch the queue and LVGL.
+static void track_finished_notify(void) {
+	(void)gui_post(track_finished_posted, NULL);
+}
+
 // Reads the current device state and reconciles the UI against it. This is the
 // single point that keeps the play/pause button and the progress bar from
 // going stale once a track finishes on its own.
@@ -3798,6 +3812,8 @@ void player_sheet_attach_drag(lv_obj_t *obj, bool opening) {
 
 // Builds the player sheet: artwork, controls and the poll that drives them.
 void player_init(gui_config_t *cfg) {
+	audio_set_completion_callback(track_finished_notify);
+
 	// The artwork decodes on the shared worker; make sure it exists before
 	// the first track can be started. Safe to call more than once.
 	coverloader_start();
