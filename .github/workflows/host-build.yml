@@ -2,8 +2,12 @@ name: Host build
 
 on:
   push:
-    branches: [main, "codex/**"]
+    branches: [main]
   pull_request:
+
+concurrency:
+  group: host-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
