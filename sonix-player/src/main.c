@@ -2057,7 +2057,15 @@ int main(int argc, char **argv) {
 		// database and with no message. The thumbnail cache falls back the
 		// same way.
 		const char *db_root = gui_cfg.sd_root_path;
-		if (!storage_sd_writable()) {
+#ifdef HOST_BUILD
+		// The simulator's card is SONIX_SD_ROOT, not the device mount point that
+		// storage_sd_writable() tracks. Testing the latter made every simulated
+		// card look read-only and quietly moved its databases into /tmp.
+		bool card_writable = storage_path_writable(gui_cfg.sd_root_path);
+#else
+		bool card_writable = storage_sd_writable();
+#endif
+		if (!card_writable) {
 			db_root = "/tmp";
 			mkdir("/tmp/.local", 0755);
 			fprintf(stderr, "main: the card is read-only, so the databases live in /tmp for this session\n");

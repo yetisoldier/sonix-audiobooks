@@ -19,7 +19,7 @@
 // Within this much of the end counts as finished: the last words of a book are
 // followed by credits nobody sits through, and a listener who stops there has
 // finished it.
-#define FINISHED_MARGIN 15.0
+#define FINISHED_MARGIN 45.0
 
 typedef struct {
 	double start;
@@ -504,5 +504,12 @@ void audiobook_note_position(double seconds, double total, bool force) {
 	last_saved_position = seconds;
 	pthread_mutex_unlock(&lock);
 
-	audiobookdb_save_position(book, resume_file, seconds);
+	if (force) {
+		// A pause, seek or stop is a deliberate checkpoint. Wait for it so a
+		// shutdown or card handoff immediately afterwards cannot lose the move.
+		audiobookdb_save_position(book, resume_file, seconds);
+	} else {
+		// Periodic checkpoints must never make the LVGL poll wait on a slow SD.
+		audiobookdb_queue_position(book, resume_file, seconds);
+	}
 }
