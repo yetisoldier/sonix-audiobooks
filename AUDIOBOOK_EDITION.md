@@ -5,10 +5,24 @@ based on [Jepl4r/sonix-player](https://github.com/Jepl4r/sonix-player) and stays
 close enough to upstream to continue receiving its player, hardware, and
 format improvements.
 
-The existing HiBy R1 Audiobook Mod remains the stable option for people who
-want the stock HiBy interface. This project is the next-generation option: an
-open player whose catalog, playback, resume, controls, and interface can be
-changed directly.
+The existing [HiBy R1 Audiobook
+Mod](https://github.com/yetisoldier/Hiby-R1-Audiobook-Mod) remains the stable
+option for people who want the stock HiBy interface. This project is the
+next-generation option: an open player whose catalog, playback, resume,
+controls, and interface can be changed directly.
+
+## What Sonix already provides
+
+- A separate `Audiobooks` catalog rooted at `/Audiobooks`.
+- Library, Authors, Series, Continue, and Finished views.
+- Multipart folder books in natural file order and direct resume into the
+  saved part, without stepping through earlier files.
+- Embedded chapters in M4B/MP4, MP3 ID3 chapter frames, and Vorbis comments.
+- Configurable playback speed, forward/back intervals, sleep timer, stop at
+  chapter end, and rewind-after-pause.
+
+This fork builds on those native features instead of reproducing the scripts
+and UI workarounds required by the stock-player mod.
 
 ## Priorities
 
