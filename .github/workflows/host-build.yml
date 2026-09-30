@@ -20,7 +20,7 @@ jobs:
       run:
         working-directory: sonix-player
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -33,7 +33,7 @@ jobs:
         run: tools/audiobook-host-smoke.sh
       - name: Upload smoke-test screenshots and logs
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: audiobook-host-smoke
           path: build/audiobook-host-smoke
