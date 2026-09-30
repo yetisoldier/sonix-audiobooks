@@ -152,7 +152,14 @@ bool audiobookdb_is_finished(const char *path);
 // A book is not a song. Coming back to one means coming back to the second it
 // was left at, in the file it was left in: the chapter file of a folder book,
 // or the book's own file.
+//
+// Periodic checkpoints use the queued form so a slow card cannot hold up the
+// interface. Deliberate pauses, seeks and shutdown paths use save_position(),
+// which waits until that checkpoint is on the card. close() also drains the
+// queue before releasing the database.
+void audiobookdb_queue_position(const char *book_path, const char *file, double seconds);
 void audiobookdb_save_position(const char *book_path, const char *file, double seconds);
+void audiobookdb_flush_positions(void);
 bool audiobookdb_get_position(const char *book_path, char *file_out, size_t file_size, double *seconds_out);
 
 // Which book a file belongs to, copying the book's path into `book_out`: the

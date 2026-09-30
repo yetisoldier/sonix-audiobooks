@@ -42,8 +42,93 @@ static unsigned generation = 1;
 
 static bool outdated;
 
+// Resume checkpoints are the only regular writes made while a book is
+// playing. They used to run on the LVGL poll thread, so an SD card taking a
+// while to finish an UPDATE also stopped touch, redraws and button feedback.
+// Keep one pending checkpoint here: there is only one active book, and a newer
+// position for it makes an older one obsolete. Deliberate actions flush the
+// worker, while periodic checkpoints merely replace the pending value.
+typedef struct {
+	char book[512];
+	char file[512];
+	double seconds;
+	unsigned generation;
+} position_job_t;
+
+static pthread_mutex_t position_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t position_cond = PTHREAD_COND_INITIALIZER;
+static pthread_once_t position_once = PTHREAD_ONCE_INIT;
+static pthread_t position_thread;
+static position_job_t position_pending;
+static bool position_has_pending;
+static bool position_busy;
+static bool position_worker_ready;
+static bool position_accepting;
+
 // Call with db_lock held.
 static void bump_generation(void) { generation++; }
+
+// Writes one checkpoint only while it still belongs to the database that was
+// open when it was queued. This prevents a late write for a removed card from
+// landing in a newly inserted card whose folders happen to have the same name.
+static void position_write(const position_job_t *job) {
+	pthread_mutex_lock(&db_lock);
+	if (db && job->generation == generation) {
+		sqlite3_stmt *stmt = NULL;
+		if (sqlite3_prepare_v2(db,
+						   "UPDATE AUDIOBOOK_TABLE SET resume_file=?, resume_pos=?, last_played=? WHERE path=?",
+						   -1, &stmt, NULL) == SQLITE_OK) {
+			sqlite3_bind_text(stmt, 1, job->file, -1, SQLITE_TRANSIENT);
+			sqlite3_bind_double(stmt, 2, job->seconds);
+			sqlite3_bind_int64(stmt, 3, (sqlite3_int64)time(NULL));
+			sqlite3_bind_text(stmt, 4, job->book, -1, SQLITE_TRANSIENT);
+			int rc = sqlite3_step(stmt);
+			if (rc != SQLITE_DONE) {
+				fprintf(stderr, "audiobooks: resume checkpoint failed: %s\n", sqlite3_errmsg(db));
+			}
+			sqlite3_finalize(stmt);
+		}
+	}
+	pthread_mutex_unlock(&db_lock);
+}
+
+static void *position_worker(void *unused) {
+	(void)unused;
+	for (;;) {
+		pthread_mutex_lock(&position_lock);
+		while (!position_has_pending) {
+			pthread_cond_wait(&position_cond, &position_lock);
+		}
+		position_job_t job = position_pending;
+		position_has_pending = false;
+		position_busy = true;
+		pthread_mutex_unlock(&position_lock);
+
+		position_write(&job);
+
+		pthread_mutex_lock(&position_lock);
+		position_busy = false;
+		pthread_cond_broadcast(&position_cond);
+		pthread_mutex_unlock(&position_lock);
+	}
+	return NULL;
+}
+
+static void position_worker_start(void) {
+	pthread_attr_t attr;
+	pthread_attr_init(&attr);
+	// The worker holds two paths and calls one small SQLite UPDATE. A bounded
+	// stack avoids paying the platform default for a thread that sleeps almost
+	// all of its life on a memory-constrained player.
+	pthread_attr_setstacksize(&attr, 64 * 1024);
+	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+	if (pthread_create(&position_thread, &attr, position_worker, NULL) == 0) {
+		position_worker_ready = true;
+	} else {
+		fprintf(stderr, "audiobooks: could not start resume checkpoint worker\n");
+	}
+	pthread_attr_destroy(&attr);
+}
 
 unsigned audiobookdb_revision(void) {
 	pthread_mutex_lock(&db_lock);
@@ -151,16 +236,32 @@ bool audiobookdb_open(const char *db_path) {
 	outdated = books > 0 && user_version() < SCHEMA_VERSION;
 
 	// A different card is a different set of books, and the row ids that named
-	// the last one's are now this one's.
+	// the last one's are now this one's. The position lock closes the small gap
+	// in which a checkpoint could otherwise capture this generation before the
+	// database is ready to accept it.
+	pthread_mutex_lock(&position_lock);
 	pthread_mutex_lock(&db_lock);
 	bump_generation();
+	position_accepting = true;
 	pthread_mutex_unlock(&db_lock);
+	pthread_mutex_unlock(&position_lock);
 
 	printf("audiobooks: %s open, %d books indexed%s\n", db_path, books, outdated ? " (an older scan)" : "");
 	return true;
 }
 
 void audiobookdb_close(void) {
+	// Stop accepting new checkpoints, then wait for the last one already
+	// accepted. Taking both locks in this order makes the handoff atomic with
+	// queue_position(); the worker never holds position_lock while taking
+	// db_lock, so it can still drain normally.
+	pthread_mutex_lock(&position_lock);
+	pthread_mutex_lock(&db_lock);
+	position_accepting = false;
+	pthread_mutex_unlock(&db_lock);
+	pthread_mutex_unlock(&position_lock);
+	audiobookdb_flush_positions();
+
 	// Waited on, not just asked: a scan still running holds the database open,
 	// sqlite3_close() then answers SQLITE_BUSY without closing the file, and
 	// an open file on the card stops the card being unmounted.
@@ -178,6 +279,7 @@ void audiobookdb_close(void) {
 		db = NULL;
 	}
 	outdated = false;
+	bump_generation();
 	pthread_mutex_unlock(&db_lock);
 }
 
@@ -460,22 +562,57 @@ int audiobookdb_parts_for_each(const char *book, audiobook_part_cb cb, void *use
 // Where the listener got to
 // ---------------------------------------------------------------------------
 
-void audiobookdb_save_position(const char *book_path, const char *file, double seconds) {
+static void position_queue(const char *book_path, const char *file, double seconds) {
 	if (!book_path || !book_path[0] || !file || !file[0]) {
 		return;
 	}
 
+	pthread_once(&position_once, position_worker_start);
+
+	position_job_t job;
+	snprintf(job.book, sizeof(job.book), "%s", book_path);
+	snprintf(job.file, sizeof(job.file), "%s", file);
+	job.seconds = seconds;
+
+	pthread_mutex_lock(&position_lock);
 	pthread_mutex_lock(&db_lock);
-	sqlite3_stmt *stmt = NULL;
-	if (db && sqlite3_prepare_v2(db, "UPDATE AUDIOBOOK_TABLE SET resume_file=?, resume_pos=?, last_played=? WHERE path=?", -1, &stmt, NULL) == SQLITE_OK) {
-		sqlite3_bind_text(stmt, 1, file, -1, SQLITE_TRANSIENT);
-		sqlite3_bind_double(stmt, 2, seconds);
-		sqlite3_bind_int64(stmt, 3, (sqlite3_int64)time(NULL));
-		sqlite3_bind_text(stmt, 4, book_path, -1, SQLITE_TRANSIENT);
-		sqlite3_step(stmt);
-		sqlite3_finalize(stmt);
-	}
+	bool accept = db && position_accepting;
+	job.generation = generation;
 	pthread_mutex_unlock(&db_lock);
+
+	if (accept && position_worker_ready) {
+		position_pending = job;
+		position_has_pending = true;
+		pthread_cond_signal(&position_cond);
+	}
+	pthread_mutex_unlock(&position_lock);
+
+	// Thread creation can fail only under severe resource pressure. A direct
+	// write is preferable then to silently losing the listener's place.
+	if (accept && !position_worker_ready) {
+		position_write(&job);
+	}
+}
+
+void audiobookdb_queue_position(const char *book_path, const char *file, double seconds) {
+	position_queue(book_path, file, seconds);
+}
+
+void audiobookdb_flush_positions(void) {
+	pthread_once(&position_once, position_worker_start);
+	if (!position_worker_ready) {
+		return;
+	}
+	pthread_mutex_lock(&position_lock);
+	while (position_has_pending || position_busy) {
+		pthread_cond_wait(&position_cond, &position_lock);
+	}
+	pthread_mutex_unlock(&position_lock);
+}
+
+void audiobookdb_save_position(const char *book_path, const char *file, double seconds) {
+	position_queue(book_path, file, seconds);
+	audiobookdb_flush_positions();
 }
 
 bool audiobookdb_get_position(const char *book_path, char *file_out, size_t file_size, double *seconds_out) {
