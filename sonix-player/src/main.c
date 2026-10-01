@@ -29,6 +29,7 @@
 #include "src/system/audio/usbaudio.h"
 #include "src/system/audio/audio.h"
 #include "src/system/library/audiobookdb.h"
+#include "src/system/playback/audiobook.h"
 #include "src/system/bluetooth/bluetooth.h"
 #include "src/system/bluetooth/btplayer.h"
 #include "src/system/device/clock.h"
@@ -41,6 +42,7 @@
 #include "src/system/audio/headset.h"
 #include "src/system/input/keymap.h"
 #include "src/system/streaming/qobuz.h"
+#include "src/system/streaming/audiobookshelf.h"
 #include "src/system/streaming/tidal.h"
 #include "src/system/remote/dlna.h"
 #include "src/system/gearboy/gbdb.h"
@@ -94,6 +96,16 @@ static bool restore_saved_track(void) {
 	if (!library_playback_state_load(saved_track, sizeof(saved_track), &saved_pos) ||
 		access(saved_track, R_OK) != 0) {
 		return false;
+	}
+	// A paused decoder's remembered position can predate a server import.
+	// The per-book checkpoint, not the generic last-track record, is authoritative.
+	char book[512], resume_file[512];
+	double resume_pos;
+	if (audiobookdb_book_for_file(saved_track, book, sizeof(book)) &&
+		audiobook_resume_point(book, resume_file, sizeof(resume_file), &resume_pos) &&
+		access(resume_file, R_OK) == 0) {
+		snprintf(saved_track, sizeof(saved_track), "%s", resume_file);
+		saved_pos = resume_pos;
 	}
 
 	// The queue is saved next to the track, so a library list or a shuffled
@@ -1921,6 +1933,7 @@ int main(int argc, char **argv) {
 	streamkeys_init();
 	qobuz_init();
 	tidal_init();
+	audiobookshelf_init();
 	lastfm_init();
 
 	lv_init();

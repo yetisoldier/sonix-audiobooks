@@ -21,6 +21,7 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <time.h>
 
 // ---------------------------------------------------------------------------
 // The last failure, for the caller to show
@@ -37,6 +38,8 @@ static __thread char last_error[192];
 // URL of the last hop of this thread's last successful request; see
 // http_last_final_url() in http.h.
 static __thread char last_final_url[2600];
+static __thread long long last_server_time_ms;
+long long http_last_server_time_ms(void) { return last_server_time_ms; }
 
 const char *http_last_final_url(void) { return last_final_url; }
 
@@ -120,6 +123,12 @@ static bool url_parse(const char *url, url_t *out) {
 	}
 	snprintf(out->path, sizeof(out->path), "%s", path);
 	return true;
+}
+
+static bool url_same_origin(const char *left, const char *right) {
+	url_t a, b;
+	return url_parse(left, &a) && url_parse(right, &b) && a.secure == b.secure && a.port == b.port &&
+			 strcasecmp(a.host, b.host) == 0;
 }
 
 char *http_url_encode(const char *in, char *out, size_t out_size) {
@@ -689,6 +698,14 @@ static bool get_once(const url_t *u, const http_req_t *req, char **out, size_t *
 	int lead_len = 0;
 	int status = read_headers(&conn, headers, sizeof(headers), lead, sizeof(lead), &lead_len);
 	*status_out = status;
+	last_server_time_ms = 0;
+	char date[80];
+	struct tm utc = {0};
+	if (header_value(headers, "Date", date, sizeof(date)) &&
+		strptime(date, "%a, %d %b %Y %H:%M:%S GMT", &utc)) {
+		time_t epoch = timegm(&utc);
+		if (epoch > 0) last_server_time_ms = (long long)epoch * 1000;
+	}
 
 	if (status >= 300 && status < 400) {
 		location[0] = '\0';
@@ -867,7 +884,7 @@ static conn_t stream_conn(http_stream_t *st) {
 	return c;
 }
 
-static bool stream_open_once(http_stream_t *st, const char *url, int timeout_secs, int *status_out,
+static bool stream_open_once(http_stream_t *st, const char *url, const char *extra_headers, int timeout_secs, int *status_out,
 							 char *location, size_t location_size) {
 	url_t u;
 	if (!url_parse(url, &u)) {
@@ -890,15 +907,16 @@ static bool stream_open_once(http_stream_t *st, const char *url, int timeout_sec
 	char host_header[300];
 	host_header_value(&u, host_header, sizeof(host_header));
 
-	char request[2600];
+	char request[4096];
 	int n = snprintf(request, sizeof(request),
 					 "GET %s HTTP/1.0\r\n" // 1.0: no chunking, no keep-alive to argue about
 					 "Host: %s\r\n"
 					 "User-Agent: " HTTP_USER_AGENT "\r\n"
 					 "Icy-MetaData: 1\r\n"
 					 "Accept: */*\r\n"
+					 "%s"
 					 "\r\n",
-					 u.path, host_header);
+					 u.path, host_header, extra_headers ? extra_headers : "");
 	// As above: snprintf returns what it would have written, not what it did.
 	if (n <= 0 || (size_t)n >= sizeof(request) || !conn_write_all(&conn, request, (size_t)n)) {
 		conn_close(&conn);
@@ -949,7 +967,7 @@ static bool stream_open_once(http_stream_t *st, const char *url, int timeout_sec
 	return true;
 }
 
-bool http_stream_open(http_stream_t *st, const char *url, int timeout_secs) {
+bool http_stream_open_ex(http_stream_t *st, const char *url, const char *extra_headers, int timeout_secs) {
 	if (!st || !url) {
 		return false;
 	}
@@ -959,17 +977,19 @@ bool http_stream_open(http_stream_t *st, const char *url, int timeout_secs) {
 
 	char current[2600];
 	snprintf(current, sizeof(current), "%s", url);
+	const char *hop_headers = extra_headers;
 
 	for (int hop = 0; hop <= HTTP_MAX_REDIRECTS; hop++) {
 		int status = 0;
 		char location[2048] = "";
-		if (stream_open_once(st, current, timeout_secs, &status, location, sizeof(location))) {
+		if (stream_open_once(st, current, hop_headers, timeout_secs, &status, location, sizeof(location))) {
 			return true;
 		}
 		if (status < 300 || status >= 400 || !location[0]) {
 			return false;
 		}
 
+		char next[2600];
 		if (location[0] == '/') {
 			url_t u;
 			if (!url_parse(current, &u)) {
@@ -977,12 +997,21 @@ bool http_stream_open(http_stream_t *st, const char *url, int timeout_secs) {
 			}
 			char base[512];
 			snprintf(base, sizeof(base), "%s://%s:%d", u.secure ? "https" : "http", u.host, u.port);
-			snprintf(current, sizeof(current), "%s%s", base, location);
+			snprintf(next, sizeof(next), "%s%s", base, location);
 		} else {
-			snprintf(current, sizeof(current), "%s", location);
+			snprintf(next, sizeof(next), "%s", location);
 		}
+		// Bearer credentials belong to the original server. Audiobookshelf may
+		// redirect media to object storage; follow it, but never disclose its
+		// Authorization header to a different origin.
+		if (!url_same_origin(current, next)) hop_headers = NULL;
+		snprintf(current, sizeof(current), "%s", next);
 	}
 	return false;
+}
+
+bool http_stream_open(http_stream_t *st, const char *url, int timeout_secs) {
+	return http_stream_open_ex(st, url, NULL, timeout_secs);
 }
 
 // Reads exactly `len` raw bytes (lead buffer first, then the socket).

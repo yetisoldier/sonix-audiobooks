@@ -28,9 +28,22 @@ For Audiobookshelf work, run the dedicated smoke suite:
 tools/audiobookshelf-host-smoke.sh
 SONIX_ABS_EXISTING=1 tools/audiobookshelf-host-smoke.sh
 SONIX_ABS_EXISTING=1 SONIX_ABS_LOCAL_PROGRESS=1 tools/audiobookshelf-host-smoke.sh
+bash tools/audiobookshelf-outbox-test.sh
+SONIX_ABS_OFFLINE_RESTART=1 bash tools/audiobookshelf-host-smoke.sh
+SONIX_ABS_CONFLICTS=1 bash tools/audiobookshelf-host-smoke.sh
 ```
 
 ## Target build
+
+For the selective upstream metadata and kernel-log changes, run:
+
+```bash
+bash tools/upstream-regression.sh
+```
+
+This compiles the real metadata parsers with AddressSanitizer/UndefinedBehaviorSanitizer, generates disposable tag fixtures, and verifies bounded kernel-log reading with mocked system calls. It needs GCC, Python 3 and FFmpeg in addition to the host build dependencies. It does not read a real kernel log, trigger a kernel fault, or reboot anything.
+
+The [upstream review](UPSTREAM_REVIEW_2026-10-01.md) records the exact commits reviewed, backports, and reasons for holding the larger changes.
 
 The first target build downloads and builds the MIPS toolchain and static dependencies. Keep the checkout in the Linux filesystem under WSL rather than a Windows-mounted path; dependency tracking and cross compilation are substantially faster there.
 

@@ -226,6 +226,37 @@ static void lyrics_offer(const char *text, size_t len) {
 	}
 }
 
+// Accept complete boolean values, not prefixes such as "10" or "yesterday".
+static bool flag_is_set(const char *value, size_t len) {
+	while (len > 0 && (isspace((unsigned char)*value) || *value == '\0')) {
+		value++;
+		len--;
+	}
+	while (len > 0 && (isspace((unsigned char)value[len - 1]) || value[len - 1] == '\0')) {
+		len--;
+	}
+	return (len == 1 && *value == '1') || (len == 4 && strncasecmp(value, "true", 4) == 0) ||
+		   (len == 3 && strncasecmp(value, "yes", 3) == 0);
+}
+
+// The album artists a compilation is credited to when its tracks carry no
+// flag: still a compilation, and still a name that says nothing about who is
+// singing.
+static bool various_artists(const char *name) {
+	return strcasecmp(name, "Various Artists") == 0 || strcasecmp(name, "Various") == 0 ||
+		   strcasecmp(name, "VA") == 0 || strcasecmp(name, "V.A.") == 0;
+}
+
+const char *metadata_shown_artist(const song_metadata_t *m) {
+	if (!m) {
+		return "";
+	}
+	if (!m->album_artist[0] || (m->artist[0] && (m->compilation || various_artists(m->album_artist)))) {
+		return m->artist;
+	}
+	return m->album_artist;
+}
+
 static void apply_vorbis_comment(song_metadata_t *out, const char *comment, size_t len) {
 	const char *eq = memchr(comment, '=', len);
 	if (!eq)
@@ -250,6 +281,11 @@ static void apply_vorbis_comment(song_metadata_t *out, const char *comment, size
 	}
 	if (strcmp(key, "DESCRIPTION") == 0 || strcmp(key, "SUMMARY") == 0 || strcmp(key, "COMMENT") == 0) {
 		description_offer(value, value_len, strcmp(key, "COMMENT") == 0 ? 1 : 3);
+		return;
+	}
+
+	if (strcmp(key, "COMPILATION") == 0 || strcmp(key, "ITUNESCOMPILATION") == 0) {
+		out->compilation = flag_is_set(value, value_len);
 		return;
 	}
 
@@ -629,7 +665,8 @@ static void txxx_fields(song_metadata_t *out, uint8_t encoding, const uint8_t *d
 	bool series = strcmp(key, "SERIES") == 0;
 	bool part = strcmp(key, "SERIES-PART") == 0 || strcmp(key, "SERIES_PART") == 0 || strcmp(key, "SERIESPART") == 0;
 	bool description = strcmp(key, "DESCRIPTION") == 0 || strcmp(key, "SUMMARY") == 0 || strcmp(key, "COMMENT") == 0;
-	if (!series && !part && !description) {
+	bool compilation = strcmp(key, "COMPILATION") == 0 || strcmp(key, "ITUNESCOMPILATION") == 0;
+	if (!series && !part && !description && !compilation) {
 		return;
 	}
 	char value[256];
@@ -640,6 +677,9 @@ static void txxx_fields(song_metadata_t *out, uint8_t encoding, const uint8_t *d
 		id3_decode_text(encoding, data + value_at, len - value_at, long_value, out_size);
 		description_offer(long_value, strlen(long_value), strcmp(key, "COMMENT") == 0 ? 1 : 3);
 		free(long_value);
+	} else if (compilation) {
+		id3_decode_text(encoding, data + value_at, len - value_at, value, sizeof(value));
+		out->compilation = flag_is_set(value, strlen(value));
 	} else if (series) {
 		id3_decode_text(encoding, data + value_at, len - value_at, value, sizeof(value));
 		copy_bounded(out->series, sizeof(out->series), value);
@@ -844,7 +884,7 @@ static bool read_id3v2(FILE *f, song_metadata_t *out) {
 			static const char *const V22_MAP[][2] = {{"TT2", "TIT2"}, {"TP1", "TPE1"}, {"TP2", "TPE2"},
 													 {"TAL", "TALB"}, {"TCO", "TCON"}, {"TRK", "TRCK"},
 													 {"TPA", "TPOS"}, {"TYE", "TYER"}, {"TXX", "TXXX"},
-												 {"ULT", "USLT"}, {"SLT", "SYLT"}, {"COM", "COMM"}};
+												 {"ULT", "USLT"}, {"SLT", "SYLT"}, {"COM", "COMM"}, {"TCP", "TCMP"}};
 			for (size_t i = 0; i < sizeof(V22_MAP) / sizeof(V22_MAP[0]); i++) {
 				if (strcmp(frame_id, V22_MAP[i][0]) == 0) {
 					snprintf(frame_id, sizeof(frame_id), "%s", V22_MAP[i][1]);
@@ -853,7 +893,7 @@ static bool read_id3v2(FILE *f, song_metadata_t *out) {
 			}
 		}
 
-		bool wanted = strcmp(frame_id, "MVNM") == 0 || strcmp(frame_id, "MVIN") == 0 || strcmp(frame_id, "TIT2") == 0 || strcmp(frame_id, "TPE1") == 0 || strcmp(frame_id, "TPE2") == 0 || strcmp(frame_id, "TALB") == 0 || strcmp(frame_id, "TCON") == 0 || strcmp(frame_id, "TRCK") == 0 || strcmp(frame_id, "TPOS") == 0 || strcmp(frame_id, "TYER") == 0 || strcmp(frame_id, "TDRC") == 0 || strcmp(frame_id, "TXXX") == 0;
+		bool wanted = strcmp(frame_id, "MVNM") == 0 || strcmp(frame_id, "MVIN") == 0 || strcmp(frame_id, "TIT2") == 0 || strcmp(frame_id, "TPE1") == 0 || strcmp(frame_id, "TPE2") == 0 || strcmp(frame_id, "TALB") == 0 || strcmp(frame_id, "TCON") == 0 || strcmp(frame_id, "TRCK") == 0 || strcmp(frame_id, "TPOS") == 0 || strcmp(frame_id, "TYER") == 0 || strcmp(frame_id, "TDRC") == 0 || strcmp(frame_id, "TXXX") == 0 || strcmp(frame_id, "TCMP") == 0;
 
 		bool lyrics_frame = lyrics_wanted && (strcmp(frame_id, "USLT") == 0 || strcmp(frame_id, "SYLT") == 0);
 		bool description_frame = description_wanted && strcmp(frame_id, "COMM") == 0;
@@ -922,6 +962,8 @@ static bool read_id3v2(FILE *f, song_metadata_t *out) {
 			copy_bounded(out->artist, sizeof(out->artist), decoded);
 		} else if (strcmp(frame_id, "TPE2") == 0) {
 			copy_bounded(out->album_artist, sizeof(out->album_artist), decoded);
+		} else if (strcmp(frame_id, "TCMP") == 0) {
+			out->compilation = flag_is_set(decoded, strlen(decoded));
 		} else if (strcmp(frame_id, "TALB") == 0) {
 			copy_bounded(out->album, sizeof(out->album), decoded);
 		} else if (strcmp(frame_id, "TCON") == 0) {
@@ -1375,6 +1417,7 @@ static void read_mp4_metadata(const char *filepath, song_metadata_t *out) {
 	snprintf(out->title, sizeof(out->title), "%s", mp4_tag_title(m));
 	snprintf(out->artist, sizeof(out->artist), "%s", mp4_tag_artist(m));
 	snprintf(out->album_artist, sizeof(out->album_artist), "%s", mp4_tag_album_artist(m));
+	out->compilation = mp4_tag_compilation(m);
 	snprintf(out->album, sizeof(out->album), "%s", mp4_tag_album(m));
 	snprintf(out->genre, sizeof(out->genre), "%s", mp4_tag_genre(m));
 	out->year = mp4_tag_year(m);
@@ -1545,9 +1588,35 @@ static void read_sidecar_tags(const char *filepath, song_metadata_t *out) {
 			out->disc_number = atoi(value);
 		} else if (strcmp(key, "year") == 0) {
 			out->year = atoi(value);
+		} else if (strcmp(key, "series") == 0) {
+			snprintf(out->series, sizeof(out->series), "%s", value);
+		} else if (strcmp(key, "series_part") == 0) {
+			snprintf(out->series_part, sizeof(out->series_part), "%s", value);
 		}
 	}
 	fclose(f);
+}
+
+// Audiobookshelf descriptions can be several kilobytes and may contain line
+// breaks, so they do not fit the deliberately one-line .tags format. The
+// downloader writes the complete text next to the audio instead. It enters the
+// same cleaner as embedded DESCRIPTION/COMMENT tags, including HTML removal.
+static void read_sidecar_description(const char *filepath) {
+	if (!description_wanted) return;
+	char path[600];
+	if ((size_t)snprintf(path, sizeof(path), "%.550s.description", filepath) >= sizeof(path)) return;
+	FILE *f = fopen(path, "rb");
+	if (!f) return;
+	char *text = malloc(DESCRIPTION_MAX_BYTES + 1);
+	if (!text) {
+		fclose(f);
+		return;
+	}
+	size_t len = fread(text, 1, DESCRIPTION_MAX_BYTES, f);
+	fclose(f);
+	text[len] = '\0';
+	description_offer(text, len, 4);
+	free(text);
 }
 
 // One track of a CUE sheet: the tags are in the sheet, not in the audio file.
@@ -1631,6 +1700,7 @@ void metadata_read(const char *filepath, song_metadata_t *out) {
 	}
 
 	read_sidecar_tags(filepath, out);
+	read_sidecar_description(filepath);
 
 	out->has_tags = out->title[0] != '\0' || out->artist[0] != '\0' || out->album[0] != '\0' || out->genre[0] != '\0';
 }

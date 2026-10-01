@@ -1230,7 +1230,9 @@ static bool list_directory(const char *path, listing_t *out, cue_sheet_t *sheets
 	}
 
 	sort_pool = out->pool;
-	qsort(out->entries, out->count, sizeof(*out->entries), entry_cmp);
+	if (out->count > 1) {
+		qsort(out->entries, out->count, sizeof(*out->entries), entry_cmp);
+	}
 	return true;
 }
 

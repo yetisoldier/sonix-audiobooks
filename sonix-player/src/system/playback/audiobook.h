@@ -3,6 +3,12 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include "src/system/library/audiobookdb.h"
+
+bool audiobook_sync_import(const audiobookdb_abs_checkpoint_t *expected, const char *server,
+	const char *file, double seconds, bool finished, long long updated_ms);
+bool audiobook_take_synced_resume(char *file, size_t size, double *seconds);
+void audiobook_cancel_synced_resume(void);
 
 // What the player needs to know about a book while it is playing.
 //

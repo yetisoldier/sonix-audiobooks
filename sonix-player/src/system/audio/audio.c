@@ -3760,7 +3760,7 @@ static void *playback_thread_func(void *arg) {
 		}
 
 		char filepath[512];
-		strncpy(filepath, current_filepath, sizeof(filepath));
+		snprintf(filepath, sizeof(filepath), "%s", current_filepath);
 		play_request = false;
 		play_request_ms = 0;
 		track_starting = true;
@@ -3827,7 +3827,7 @@ int audio_play(const char *filepath) {
 
 	pthread_mutex_lock(&audio_mutex);
 	restart_fresh_pending = false; // an explicit play beats the armed restart
-	strncpy(current_filepath, filepath, sizeof(current_filepath) - 1);
+	snprintf(current_filepath, sizeof(current_filepath), "%s", filepath);
 	play_request = true;
 	play_request_ms = log_ms();
 	write_fail_retry_used = false;

@@ -23,6 +23,7 @@ The fork adds and hardens the parts that matter most when the R1 is used as an a
 - Manual bookmarks with a global Bookmarks view, direct jump, and deletion.
 - Fast indexed folder browsing instead of a slow SD-card directory walk on every tap.
 - Safer R1 touch and physical-control discovery, so the player does not depend on fixed Linux input-device numbers.
+- Optional Audiobookshelf downloads, linking of existing local copies, and offline-first progress sync with a visible Now Playing status.
 
 ## Screenshots
 
@@ -30,9 +31,9 @@ The fork adds and hardens the parts that matter most when the R1 is used as an a
 | --- | --- |
 | <img src="docs/screenshots/home.png" width="240" alt="Sonix Audiobooks home screen with its Audiobooks tile"> | <img src="docs/screenshots/audiobooks.png" width="240" alt="Audiobooks page with Library, Series, Authors, Continue, Bookmarks, and Folders"> |
 
-| Audiobook Now Playing |
-| --- |
-| <img src="docs/screenshots/audiobook-now-playing.png" width="240" alt="Audiobook Now Playing screen showing artwork, title, author, progress, and skip controls"> |
+| Audiobook Now Playing | Offline Audiobookshelf sync |
+| --- | --- |
+| <img src="docs/screenshots/audiobook-now-playing.png" width="240" alt="Audiobook Now Playing screen showing artwork, title, author, progress, and skip controls"> | <img src="docs/screenshots/audiobookshelf-sync.png" width="240" alt="Centered Audiobookshelf status showing waiting for Wi-Fi while the local audiobook is paused"> |
 
 ## Install
 
@@ -83,6 +84,16 @@ Open **Audiobooks** from the home screen:
 
 From Now Playing, use the menu for chapters, bookmarks, book information, playback speed, skip intervals, rewind-after-pause, stop-at-chapter-end, and the sleep timer. Resume checkpoints are periodic and also saved whenever playback meaningfully changes. Give a newly started book about 15 seconds before expecting a periodic checkpoint; pause, seek, stop, card removal, and shutdown save immediately.
 
+## Audiobookshelf (optional)
+
+Open **Streaming > Audiobookshelf** and enter your server URL and an API token from your Audiobookshelf server. Keep the token private. Choose a library and a book to download it, or link a compatible existing SD-card copy when offered. Downloads are automatically added to the local audiobook catalog; matching a title alone does not enable sync for an existing copy.
+
+Listen with Wi-Fi off normally. When you turn Wi-Fi on, linked books reconcile their progress automatically. The Now Playing label shows whether a book is local-only, waiting for Wi-Fi, syncing, or synced. Sync never enables Wi-Fi itself.
+
+The newest listening timestamp wins, including a newer intentional rewind. If timestamps are missing, unreliable or tied, the farther position through the whole book wins. Incoming server progress does not interrupt active playback; a paused book uses the imported file/position on its next Play. That paused screen can still show the old position until you press Play.
+
+See [Audiobookshelf setup, sync rules and limitations](docs/AUDIOBOOKSHELF_SYNC.md). Manual bookmarks do not sync, and simultaneous listening on two devices can still race because the server API does not provide atomic conditional updates.
+
 ## Reliability and recovery
 
 The player is designed to remain responsive during resume writes and catalog work, but it is still community-tested firmware for a small single-core player. Keep the official R1 firmware available before updating.
@@ -93,7 +104,7 @@ If an update fails or you want the stock interface back, reinstall the official 
 
 ## Project status
 
-The public Sonix Audiobooks `0.1.0` is an early release for real-world R1 testing. The next development build adds optional Audiobookshelf browsing, downloads, local-book linking, and two-way progress sync; it is documented in the **Unreleased** section of [CHANGELOG.md](CHANGELOG.md) and is not part of `0.1.0` yet.
+The latest public release is **Sonix Audiobooks 0.2.0**, an early community-feedback release for the original HiBy R1. It includes the optional Audiobookshelf integration and selective upstream fixes listed in [CHANGELOG.md](CHANGELOG.md). It has passed host/simulator tests and short checks on one physical R1, but is not a claim of exhaustive compatibility or long-duration stability across every library and output device.
 
 Known areas that benefit from community testing include very large libraries, unusual metadata, USB-C audio devices, Bluetooth hardware, and long unattended playback.
 

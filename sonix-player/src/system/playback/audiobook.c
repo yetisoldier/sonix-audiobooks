@@ -6,6 +6,9 @@
 #include "src/system/decode/mp4.h"
 #include "src/system/library/id3chap.h"
 #include "src/system/library/vorbischap.h"
+#include "src/system/streaming/audiobookshelf.h"
+#include "src/system/audio/audio.h"
+#include <math.h>
 
 #include <pthread.h>
 #include <stdio.h>
@@ -49,8 +52,13 @@ static int part_index;
 static time_t last_save;
 static double last_saved_position;
 static bool finished_marked; // this book has already been put on the shelf
+static char synced_resume_file[512];
+static double synced_resume_seconds;
+static bool synced_resume_starting;
 
 static void clear_locked(void) {
+	synced_resume_file[0] = '\0';
+	synced_resume_starting = false;
 	free(chapters);
 	chapters = NULL;
 	chapter_count = 0;
@@ -434,6 +442,42 @@ int audiobook_chapter_at(double seconds) {
 
 unsigned audiobook_serial(void) { return serial; }
 
+bool audiobook_sync_import(const audiobookdb_abs_checkpoint_t *expected, const char *server,
+	const char *file, double seconds, bool finished, long long updated_ms) {
+	pthread_mutex_lock(&lock);
+	bool loaded = current_is_book && strcmp(current_book, expected->book) == 0;
+	// Never seek live audio from a networking worker. A paused book takes the
+	// imported point on its next Play; idle books simply update their resume.
+	bool busy = loaded && (audio_get_status() == AUDIO_STATUS_PLAYING || synced_resume_starting);
+	bool ok = !busy && audiobookdb_abs_import(expected, server, file, seconds, finished, updated_ms);
+	if (ok && loaded) {
+		snprintf(synced_resume_file, sizeof(synced_resume_file), "%s", file);
+		synced_resume_seconds = seconds;
+		last_saved_position = seconds;
+	}
+	pthread_mutex_unlock(&lock);
+	return ok;
+}
+
+bool audiobook_take_synced_resume(char *file, size_t size, double *seconds) {
+	pthread_mutex_lock(&lock);
+	bool found = synced_resume_file[0] != '\0';
+	if (found) {
+		snprintf(file, size, "%s", synced_resume_file);
+		*seconds = synced_resume_seconds;
+		synced_resume_starting = true;
+	}
+	pthread_mutex_unlock(&lock);
+	return found;
+}
+
+void audiobook_cancel_synced_resume(void) {
+	pthread_mutex_lock(&lock);
+	synced_resume_file[0] = '\0';
+	synced_resume_starting = false;
+	pthread_mutex_unlock(&lock);
+}
+
 double audiobook_saved_position(const char *filepath) {
 	if (!filepath || !filepath[0]) {
 		return 0;
@@ -457,6 +501,16 @@ double audiobook_saved_position(const char *filepath) {
 
 void audiobook_note_position(double seconds, double total, bool force) {
 	pthread_mutex_lock(&lock);
+	if (synced_resume_file[0]) {
+		if (synced_resume_starting && strcmp(current_path, synced_resume_file) == 0 &&
+			audio_get_status() == AUDIO_STATUS_PLAYING && fabs(seconds - synced_resume_seconds) < 3.0) {
+			synced_resume_file[0] = '\0';
+			synced_resume_starting = false;
+		} else {
+			pthread_mutex_unlock(&lock);
+			return; // a paused decoder's old position must not undo an import
+		}
+	}
 	if (!current_is_book || seconds < 0) {
 		pthread_mutex_unlock(&lock);
 		return;
@@ -470,9 +524,11 @@ void audiobook_note_position(double seconds, double total, bool force) {
 	// In a folder book only the end of the last part is the end of the book,
 	// and the book starts over from its first part.
 	bool last_part = part_count == 0 || part_index == part_count - 1;
+	bool completed = false;
 	char resume_file[512];
 	snprintf(resume_file, sizeof(resume_file), "%s", current_path);
 	if (last_part && total > FINISHED_MARGIN && seconds >= total - FINISHED_MARGIN) {
+		completed = true;
 		seconds = 0;
 		force = true;
 		if (part_count > 0) {
@@ -512,4 +568,5 @@ void audiobook_note_position(double seconds, double total, bool force) {
 		// Periodic checkpoints must never make the LVGL poll wait on a slow SD.
 		audiobookdb_queue_position(book, resume_file, seconds);
 	}
+	audiobookshelf_queue_progress(book, resume_file, seconds, completed, force || completed);
 }

@@ -163,6 +163,26 @@ void audiobookdb_save_position(const char *book_path, const char *file, double s
 void audiobookdb_flush_positions(void);
 bool audiobookdb_get_position(const char *book_path, char *file_out, size_t file_size, double *seconds_out);
 
+// The saved checkpoint is the durable upload queue; this table only remembers
+// which snapshot the server acknowledged. No network call holds db_lock.
+typedef struct {
+	char book[512], file[512], server[512];
+	double seconds;
+	bool finished, known, linked, synced, failed;
+	long long updated_ms, revision, server_updated_ms;
+	int sync_error;
+	unsigned generation;
+} audiobookdb_abs_checkpoint_t;
+bool audiobookdb_abs_get(const char *book, audiobookdb_abs_checkpoint_t *out);
+bool audiobookdb_abs_next(const char *server, audiobookdb_abs_checkpoint_t *out);
+void audiobookdb_abs_result(const audiobookdb_abs_checkpoint_t *sent, const char *server,
+						   bool linked, bool success, bool failed);
+void audiobookdb_abs_retry(const char *book);
+void audiobookdb_abs_reset(const char *book);
+void audiobookdb_abs_reconnect(void);
+bool audiobookdb_abs_import(const audiobookdb_abs_checkpoint_t *expected, const char *server,
+	const char *file, double seconds, bool finished, long long updated_ms);
+
 // Which book a file belongs to, copying the book's path into `book_out`: the
 // file itself for a single-file book, the folder for a part of a folder book.
 // False for a file that is no book's.

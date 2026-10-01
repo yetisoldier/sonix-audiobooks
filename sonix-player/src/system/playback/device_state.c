@@ -1223,6 +1223,13 @@ audio_status_t device_state_toggle_play_pause(void) {
 		return AUDIO_STATUS_PLAYING;
 	}
 
+	char synced_file[512];
+	double synced_seconds;
+	if (audio_get_status() != AUDIO_STATUS_PLAYING &&
+		audiobook_take_synced_resume(synced_file, sizeof(synced_file), &synced_seconds)) {
+		device_state_play_file_at(synced_file, synced_seconds);
+		return AUDIO_STATUS_PLAYING;
+	}
 	switch (audio_get_status()) {
 	case AUDIO_STATUS_PLAYING:
 		audio_pause();
@@ -1351,6 +1358,7 @@ void device_state_scrub_commit(void) {
 }
 
 void device_state_seek(double seconds) {
+	audiobook_cancel_synced_resume();
 	// A seek from anywhere else -- the slider, the queue -- ends a scrub that
 	// was still open, or the interface would go on drawing a thumb that no
 	// longer means anything.

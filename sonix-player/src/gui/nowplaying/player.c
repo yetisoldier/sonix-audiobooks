@@ -43,6 +43,7 @@
 #include "src/system/device/led.h"
 #include "src/system/playback/playlist.h"
 #include "src/system/streaming/podcast.h"
+#include "src/system/streaming/audiobookshelf.h"
 #include "src/system/streaming/podcastcache.h"
 #include "src/system/streaming/podcastsubs.h"
 #include "src/system/streaming/qobuzcache.h"
@@ -61,6 +62,7 @@ static lv_obj_t *play_btn;
 static lv_obj_t *play_btn_icon;
 static lv_obj_t *song_title_label;
 static lv_obj_t *song_artist_label;
+static lv_obj_t *abs_sync_label;
 static lv_obj_t *format_label; // "16/44.1 FLAC", right of the artist line
 static lv_obj_t *fav_btn_obj;  // the button it sits on, hidden on a book
 static lv_obj_t *controls_row; // transport row: where the ellipsis lives, and the star in Studio
@@ -2449,10 +2451,9 @@ static void refresh_now_playing(void) {
 	const char *slash = strrchr(file, '/');
 	scrolltext_set(song_title_label, state.metadata.title[0] ? state.metadata.title : (slash ? slash + 1 : file));
 
-	// The album's artist, not this track's: on a compilation every track has
-	// its own performer, but the album is credited to one name. Fall back to
-	// the track artist when the file has no album artist tag.
-	const char *artist = state.metadata.album_artist[0] ? state.metadata.album_artist : state.metadata.artist;
+	// The album's artist, not this track's, unless the record is a
+	// compilation: see metadata_shown_artist().
+	const char *artist = metadata_shown_artist(&state.metadata);
 	scrolltext_set(song_artist_label, artist);
 	alt_pills_sync();
 
@@ -2991,6 +2992,24 @@ static void track_finished_notify(void) {
 // Reads the current device state and reconciles the UI against it. This is the
 // single point that keeps the play/pause button and the progress bar from
 // going stale once a track finishes on its own.
+static void update_abs_sync(const device_state_t *state) {
+	if (!abs_sync_label) return;
+	if (state->live || !audiobook_mode || !state->current_file[0]) {
+		(void)audiobookshelf_sync_status(NULL);
+		lv_obj_add_flag(abs_sync_label, LV_OBJ_FLAG_HIDDEN);
+		return;
+	}
+	audiobookshelf_sync_status_t status = audiobookshelf_sync_status(state->current_file);
+	static const char *keys[] = {
+		"abs_sync_checking", "abs_sync_local", "abs_sync_setup", "abs_sync_linked",
+		"abs_sync_pending", "abs_sync_offline", "abs_sync_sending", "abs_sync_synced",
+		"abs_sync_retry", "abs_sync_other_server", "abs_sync_synced_offline"
+	};
+	const char *value = tr(keys[status]);
+	if (strcmp(lv_label_get_text(abs_sync_label), value) != 0) lv_label_set_text(abs_sync_label, value);
+	lv_obj_remove_flag(abs_sync_label, LV_OBJ_FLAG_HIDDEN);
+}
+
 static void update_progress(void) {
 	// Auto-advance or loop the folder when the track has played through.
 	if (device_state_take_completion()) {
@@ -3067,6 +3086,7 @@ static void update_progress(void) {
 	apply_audiobook_mode(!state.live && audiobook_is_playing(),
 						 !state.live && podcastcache_owns(state.current_file));
 	update_format_label(&state); // the rate/bits settle shortly after the start
+	update_abs_sync(&state);
 
 	// The status LED follows playback promptly from here (the battery poll
 	// only comes round once a minute). Only writes when the colour changes.
@@ -4408,6 +4428,21 @@ void player_init(gui_config_t *cfg) {
 	studio_quality_icon = lv_image_create(studio_quality);
 
 	lyrics_build();
+
+	abs_sync_label = lv_label_create(player_screen);
+	lv_obj_set_size(abs_sync_label, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+	lv_obj_set_style_max_width(abs_sync_label, cfg->screen_width - 192, 0);
+	lv_obj_align(abs_sync_label, LV_ALIGN_TOP_MID, 0, 12);
+	lv_label_set_long_mode(abs_sync_label, LV_LABEL_LONG_WRAP);
+	lv_obj_set_style_text_font(abs_sync_label, &font_ui_18, 0);
+	lv_obj_set_style_text_align(abs_sync_label, LV_TEXT_ALIGN_CENTER, 0);
+	lv_obj_set_style_text_color(abs_sync_label, lv_color_white(), 0);
+	lv_obj_set_style_bg_color(abs_sync_label, lv_color_black(), 0);
+	lv_obj_set_style_bg_opa(abs_sync_label, LV_OPA_60, 0);
+	lv_obj_set_style_pad_all(abs_sync_label, 5, 0);
+	lv_obj_remove_flag(abs_sync_label, LV_OBJ_FLAG_CLICKABLE);
+	lv_obj_add_flag(abs_sync_label, LV_OBJ_FLAG_HIDDEN);
+	lv_label_set_text(abs_sync_label, "");
 
 	// Last, so it is above the artwork: an invisible strip exactly where the
 	// status bar would be, owning the pull-down that opens the control centre.

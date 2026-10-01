@@ -59,6 +59,8 @@ bool http_get_ex(const char *url, const char *extra_headers, bool want_error_bod
 // holds the URL of the last hop -- per thread, like http_last_error(), and
 // overwritten by the next request on the same thread, so copy it immediately.
 const char *http_last_final_url(void);
+// HTTP Date from the latest response on this thread, in UTC milliseconds (0 if absent).
+long long http_last_server_time_ms(void);
 
 // ---------------------------------------------------------------------------
 // Requests that are not GET
@@ -169,6 +171,12 @@ typedef struct {
 // https://, the host does not resolve, the connection or the TLS handshake
 // fails, or the status is not 200.
 bool http_stream_open(http_stream_t *st, const char *url, int timeout_secs);
+
+// The authenticated form. `extra_headers` is the same CRLF-terminated list
+// accepted by http_get_ex(); it is repeated after same-origin redirects and
+// dropped if a redirect changes scheme, host or port. Needed for media
+// endpoints such as Audiobookshelf, where the body is too large to buffer.
+bool http_stream_open_ex(http_stream_t *st, const char *url, const char *extra_headers, int timeout_secs);
 
 // Reads up to `len` bytes of *audio* into buf: any ICY metadata blocks in the
 // way are consumed and parsed out, never handed to the caller. Returns the

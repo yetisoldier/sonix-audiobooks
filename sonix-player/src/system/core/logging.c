@@ -791,6 +791,10 @@ static bool kmsg_tried;
 // Lines copied per call; the rest are counted, not printed.
 #define KMSG_LINES_PER_CALL 20
 
+// Bound reads as well as output, including repeated EINTR/EPIPE. A noisy
+// kernel must not keep the watchdog from checking playback and UI liveness.
+#define KMSG_READS_PER_CALL 64
+
 void logging_follow_kernel(void) {
 	if (!kmsg_tried) {
 		kmsg_tried = true;
@@ -808,7 +812,7 @@ void logging_follow_kernel(void) {
 	int printed = 0;
 	int skipped = 0;
 	char record[1024];
-	for (;;) {
+	for (unsigned attempts = 0; attempts < KMSG_READS_PER_CALL; attempts++) {
 		// One record per read, "level,seq,usec,flags;text\n" followed by
 		// " KEY=value" lines. EPIPE: records were overwritten before this read.
 		ssize_t got = read(kmsg_fd, record, sizeof(record) - 1);
