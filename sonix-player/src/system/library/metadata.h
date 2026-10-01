@@ -54,4 +54,14 @@ void metadata_read(const char *filepath, song_metadata_t *out);
 // NULL when there are none.
 char *metadata_read_lyrics(const char *filepath);
 
+// The long-form description carried by an audiobook: ID3 COMM/DESCRIPTION,
+// Vorbis/APE DESCRIPTION, COMMENT or SUMMARY, and the MP4 desc/ldes/cmt atoms.
+// The returned UTF-8 text is malloc'd and capped to a size suitable for the
+// R1's interface; NULL means the file has no description.
+char *metadata_read_description(const char *filepath);
+
+// The audiobook scanner needs the ordinary tags and the long description at
+// the same time. This avoids opening and parsing a large book twice.
+char *metadata_read_with_description(const char *filepath, song_metadata_t *out);
+
 #endif // METADATA_H

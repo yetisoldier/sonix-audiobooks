@@ -68,6 +68,15 @@ checkpoint_ready() {
 	awk -v seconds="$seconds" 'BEGIN { exit !(seconds >= 10) }'
 }
 
+details_ready() {
+	[[ $(sqlite3 "$DB" "SELECT COUNT(*) FROM AUDIOBOOK_TABLE WHERE name='Book One' AND summary='A host-test description & details.' AND location LIKE '%/Test Author/Series One/Book One';" 2>/dev/null) == 1 ]] &&
+		[[ $(sqlite3 "$DB" "SELECT COUNT(*) FROM AUDIOBOOK_TABLE WHERE name='Standalone Book' AND summary='A host-test summary for the standalone M4B.' AND location LIKE '%/Standalone Author/Standalone Book';" 2>/dev/null) == 1 ]]
+}
+
+bookmark_ready() {
+	[[ $(sqlite3 "$DB" 'SELECT COUNT(*) FROM AUDIOBOOK_BOOKMARKS;' 2>/dev/null) == 1 ]]
+}
+
 click() {
 	xdotool mousemove --window "$WINDOW" "$1" "$2" click 1
 	sleep "${3:-0.4}"
@@ -159,6 +168,7 @@ EOF
 ffmpeg -hide_banner -loglevel error -f lavfi -i "sine=frequency=440:duration=16" \
 	-ac 1 -b:a 64k -metadata album="Book One" -metadata album_artist="Test Author" \
 	-metadata artist="Test Author" -metadata title="Part One" -metadata track="1/2" \
+	-metadata comment="<p>A host-test <b>description</b> &amp; details.</p>" \
 	"$SD/Audiobooks/Test Author/Series One/Book One/01 - Part One.mp3"
 ffmpeg -hide_banner -loglevel error -f lavfi -i "sine=frequency=550:duration=60" \
 	-ac 1 -b:a 64k -metadata album="Book One" -metadata album_artist="Test Author" \
@@ -167,7 +177,7 @@ ffmpeg -hide_banner -loglevel error -f lavfi -i "sine=frequency=550:duration=60"
 ffmpeg -hide_banner -loglevel error -f lavfi -i "sine=frequency=660:duration=60" \
 	-ac 1 -c:a aac -b:a 64k -metadata album="Standalone Book" \
 	-metadata album_artist="Standalone Author" -metadata artist="Standalone Author" \
-	-metadata title="Standalone Book" \
+	-metadata title="Standalone Book" -metadata description="<p>A host-test summary for the standalone M4B.</p>" \
 	"$SD/Audiobooks/Standalone Author/Standalone Book/Standalone Book.m4b"
 
 # Use a loopback TCP display rather than /tmp/.X11-unix. WSLg exposes that
@@ -192,12 +202,45 @@ click 330 475       # confirmation -> Scan
 
 wait_for "two scanned audiobooks" 300 catalog_ready
 wait_for "two multipart rows" 50 parts_ready
+wait_for "indexed descriptions and folder locations" 50 details_ready
 screenshot catalog
 
 click 240 735       # scan result -> OK
+screenshot audiobook-home
+click 125 650       # Audiobooks -> Bookmarks
+screenshot bookmarks-empty
+click 43 88         # back to Audiobooks
+click 355 650       # Audiobooks -> Folders
+screenshot folders-root
+click 240 170       # first author folder
+screenshot folders-author
+click 43 88         # folder guard -> folder root
+click 43 88         # back to Audiobooks
 click 125 245       # Audiobooks -> Library
 click 240 180       # Book One
 wait_for "multipart playback" 100 grep -q "01 - Part One.mp3" "$WORK/first-run.log"
+screenshot player
+sleep 2
+click 438 730       # audiobook tools menu
+screenshot book-menu
+click 300 523       # Add bookmark
+wait_for "a saved manual bookmark" 50 bookmark_ready
+sleep 2             # let the confirmation toast leave before the next tap
+click 438 730       # audiobook tools menu
+sleep 1
+screenshot book-menu-summary
+click 300 640       # Summary
+sleep 1
+screenshot summary
+click 43 88         # summary -> player
+sleep 1
+click 438 730       # audiobook tools menu
+sleep 1
+click 300 586       # Bookmarks for this book
+screenshot bookmark-list
+click 240 175       # resume from the saved bookmark
+wait_for "exact manual-bookmark resume" 50 grep -Eq \
+	"play requested '.*01 - Part One\\.mp3' from [1-9][0-9]*(\\.[0-9]+)? s" "$WORK/first-run.log"
 sleep 12
 xdotool key --window "$WINDOW" n
 
@@ -215,6 +258,7 @@ click 240 180       # Book One
 
 wait_for "direct resume after restart" 100 grep -Eq \
 	"play requested '.*01 - Part One\\.mp3' from [1-9][0-9]*(\\.[0-9]+)? s" "$WORK/resume-run.log"
+bookmark_ready || fail "the manual bookmark did not survive restart"
 screenshot resumed
 
 # Part one has only a few seconds left after the restored position. Its natural
@@ -227,5 +271,6 @@ grep -q "gapless: reusing the open PCM" "$WORK/resume-run.log" || \
 printf 'Audiobook host smoke test passed.\n'
 printf '  Books: 2 (one multipart MP3, one M4B)\n'
 printf '  Resume: %s at %s seconds\n' "$RESUME_FILE" "$RESUME_POSITION"
+printf '  Manual bookmark: persisted across restart\n'
 printf '  Auto-advance: multipart MP3 part one -> part two\n'
 printf '  Artifacts: %s\n' "$WORK"

@@ -1,6 +1,7 @@
 .DS_Store
 build/
 .host-test/
+/tmp/
 
 sonix-player/sonix_player
 sonix-player/sonix_player_debug
@@ -21,6 +22,7 @@ sonix-player/audio-target
 
 sonix-player/compile_commands.json
 sonix-player/rockbox-toolchain
+sonix-player/tmp/
 
 sonix-player/lvgl/
 sonix-player/opus-1.4/

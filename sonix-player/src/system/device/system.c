@@ -41,6 +41,7 @@
 #include "src/system/streaming/tidalcache.h"
 #include "src/system/library/library.h"
 #include "src/system/core/logging.h"
+#include "src/system/core/panel.h"
 #include "src/system/library/playlists.h"
 #include "src/system/device/usb.h"
 #include "src/system/device/power.h"
@@ -1777,6 +1778,52 @@ static void start_input_thread_fd(const char *node, bool headset, int fd) {
 
 #ifndef HOST_BUILD
 static void start_input_thread(const char *node, bool headset) { start_input_thread_fd(node, headset, -1); }
+
+// The built-in key devices normally become event0 and event2, but those
+// numbers are probe-order details just like the touchscreen's. Identify them
+// by their kernel names so a late touch probe cannot silently steal a button
+// thread. The panel node itself comes from the discovery performed in main.c.
+static void start_builtin_input_threads(void) {
+	DIR *d = opendir("/dev/input");
+	if (!d) {
+		return;
+	}
+
+	struct dirent *e;
+	while ((e = readdir(d)) != NULL) {
+		if (strncmp(e->d_name, "event", 5) != 0) {
+			continue;
+		}
+
+		char node[32];
+		if ((size_t)snprintf(node, sizeof(node), "/dev/input/%s", e->d_name) >= sizeof(node)) {
+			continue;
+		}
+
+		int fd = open(node, O_RDONLY);
+		if (fd < 0) {
+			continue;
+		}
+
+		char name[128] = {0};
+		bool is_builtin = ioctl(fd, EVIOCGNAME(sizeof(name) - 1), name) >= 0 &&
+			(strcmp(name, "md-gpio-keys") == 0 || strcmp(name, "jz adc keyboard") == 0);
+		close(fd);
+
+		if (is_builtin) {
+			printf("input: %s is a built-in button device (%s)\n", node, name);
+			start_input_thread(node, false);
+		}
+	}
+
+	closedir(d);
+
+	const char *touch_node = panel_touch_device();
+	if (touch_node) {
+		printf("input: %s is the touch wake-key device\n", touch_node);
+		start_input_thread(touch_node, false);
+	}
+}
 #endif
 
 #ifdef HOST_BUILD
@@ -2340,16 +2387,10 @@ void system_start_services(system_config_t *cfg, system_notification_cb_t notifi
 #ifdef HOST_BUILD
 	start_host_input_thread();
 #else
-	// One thread per button node. event1 is the touchscreen and is LVGL's for
-	// touches -- but it is watched here too, because with double-tap wake on,
-	// the touch controller reports the wake tap as a power-key press on its
-	// own node while the panel is blanked. Touch coordinates are ABS events
-	// this thread simply ignores; only key events are acted on.
-	static const char *const button_nodes[] = {"/dev/input/event0", "/dev/input/event2", "/dev/input/event1"};
-	for (size_t i = 0; i < sizeof(button_nodes) / sizeof(button_nodes[0]); i++) {
-		start_input_thread(button_nodes[i], false);
-	}
-
+	// Touch is watched here too: with double-tap wake enabled, its controller
+	// reports the wake tap as a power-key press while the panel is blanked.
+	// The input thread ignores its absolute-coordinate events.
+	start_builtin_input_threads();
 	start_headset_input_thread();
 #endif
 	start_bt_input_scanner();

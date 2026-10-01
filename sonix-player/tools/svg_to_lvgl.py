@@ -390,11 +390,15 @@ COLOR_ICONS = [
     ("qobuz.png", "menu_qobuz", SECTION_ICON_SIZE),
     ("radio.png", "menu_radio", SECTION_ICON_SIZE),
     ("podcast.png", "menu_podcast", SECTION_ICON_SIZE),
-    ("audiobooks.png", "menu_audiobooks", MAIN_MENU_ICON_SIZE),
-    ("audiobook-library.png", "menu_audiobook_library", SECTION_ICON_SIZE),
-    ("audiobook-series.png", "menu_audiobook_series", SECTION_ICON_SIZE),
-    ("audiobook-author.png", "menu_audiobook_author", SECTION_ICON_SIZE),
-    ("audiobook-continue.png", "menu_audiobook_continue", SECTION_ICON_SIZE),
+    # Audiobook Edition artwork. Kept as SVG here (rather than interface
+    # glyphs above) so its full colour survives rasterisation.
+    ("audiobooks-custom.svg", "menu_audiobooks", MAIN_MENU_ICON_SIZE),
+    ("audiobook-library.svg", "menu_audiobook_library", SECTION_ICON_SIZE),
+    ("audiobook-series.svg", "menu_audiobook_series", SECTION_ICON_SIZE),
+    ("audiobook-author.svg", "menu_audiobook_author", SECTION_ICON_SIZE),
+    ("audiobook-continue.svg", "menu_audiobook_continue", SECTION_ICON_SIZE),
+    ("audiobook-bookmarks.svg", "menu_audiobook_bookmarks", SECTION_ICON_SIZE),
+    ("audiobook-folders.svg", "menu_audiobook_folders", SECTION_ICON_SIZE),
     ("settings.png", "menu_settings", MAIN_MENU_ICON_SIZE),
     ("more.png", "menu_more", MAIN_MENU_ICON_SIZE),
     # What lives inside "More", at section size.

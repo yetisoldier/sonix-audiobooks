@@ -8,6 +8,7 @@
 #include "lvgl/lvgl.h"
 
 #include "src/gui/fonts/fonts.h"
+#include "src/gui/library/audiobookextras.h"
 #include "src/gui/nowplaying/coverloader.h"
 #include "src/gui/nowplaying/player.h"
 #include "src/gui/shell/confirm.h"
@@ -645,10 +646,12 @@ static bool collect_part(const char *path, const char *title, void *user) {
 	return grown[n] != NULL;
 }
 
-static void play_book(const char *book) {
-	char file[512];
-	double resume = 0;
-	if (!audiobook_resume_point(book, file, sizeof(file), &resume)) {
+void audiobooks_play_book_at(const char *book, const char *wanted_file, double wanted_seconds) {
+	char file[512] = "";
+	double resume = wanted_seconds > 0 ? wanted_seconds : 0;
+	if (wanted_file && wanted_file[0]) {
+		snprintf(file, sizeof(file), "%s", wanted_file);
+	} else if (!audiobook_resume_point(book, file, sizeof(file), &resume)) {
 		return;
 	}
 
@@ -683,6 +686,8 @@ static void play_book(const char *book) {
 	player_sheet_open(true);
 }
 
+void audiobooks_play_book(const char *book) { audiobooks_play_book_at(book, NULL, 0); }
+
 static void book_clicked_cb(lv_event_t *e) {
 	if (player_sheet_drag_active() || switcher_back_drag_active()) {
 		return; // a swipe across the list, not a tap
@@ -702,7 +707,7 @@ static void book_clicked_cb(lv_event_t *e) {
 	}
 	char book[512];
 	snprintf(book, sizeof(book), "%s", found);
-	play_book(book);
+	audiobooks_play_book(book);
 }
 
 static void books_sort_cb(lv_event_t *e) { sort_menu_show(lv_event_get_current_target(e), books_list, reload_books); }
@@ -988,7 +993,7 @@ static void build_names_page(gui_config_t *cfg) {
 }
 
 // ---------------------------------------------------------------------------
-// the section page: four tiles, the finished books and the options
+// the section page: six tiles, the finished books and the options
 // ---------------------------------------------------------------------------
 
 static void open_library(void) { books_open(LIST_LIBRARY, NULL, tr("audiobook_library")); }
@@ -1031,6 +1036,8 @@ static void build_section_page(gui_config_t *cfg) {
 		{"audiobook_series", &icon_menu_audiobook_series, NULL, open_series},
 		{"audiobook_authors", &icon_menu_audiobook_author, NULL, open_authors},
 		{"audiobook_continue", &icon_menu_audiobook_continue, NULL, open_continue},
+		{"audiobook_bookmarks", &icon_menu_audiobook_bookmarks, NULL, audiobookmarks_open},
+		{"audiobook_folders", &icon_menu_audiobook_folders, NULL, audiobookfolders_open},
 	};
 	// The Music page's grid of two by three, so the tiles are the same size.
 	section_grid =

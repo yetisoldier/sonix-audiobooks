@@ -81,3 +81,23 @@ Sonix now provides audiobook library, Continue, author, series, ordered parts,
 chapters, bookmarks, and per-book resume behavior. Manual metadata correction
 and books belonging to more than one series require a broader catalog data
 model and are tracked as future enhancements rather than stability fixes.
+
+## R1 frozen touchscreen after firmware update
+
+**Root cause:** The R1 CST8xx/Hynitron loader was copied into the firmware with
+Windows CRLF line endings. It has no shebang, so the packer's earlier shebang
+normalization skipped it. The carriage returns broke the shell continuations,
+and `insmod` received invalid or missing I2C parameters. When touch failed to
+register, Sonix's fixed `/dev/input/event1` path could open the ADC keyboard as
+a pointer instead.
+
+**Change:** The loader is stored with Unix line endings, all packaged shell
+scripts are normalized, and the packer rejects carriage returns in module
+loaders. Sonix waits for an input device with both absolute axes and the Linux
+direct-touch property. Built-in button and wake-key threads use kernel device
+identity and the discovered panel node rather than fixed event numbers.
+
+**Hardware check:** Clean boot registers `hyn_ts` at `event1`. A controlled
+late-probe test places a non-direct absolute device at `event1`, reloads
+`hyn_ts` at `event4`, and verifies that both LVGL and the touch wake-key thread
+open `event4`; the UI remains responsive.

@@ -13,5 +13,4 @@ insmod cst8xx_touch.ko \
  cst_power_en_gpio=-1 \
  cst_power_en_level=1 \
  cst_max_touch_number=2 \
- cst_regulator_name=aldo2 \
-
+ cst_regulator_name=aldo2

@@ -33,7 +33,7 @@ and UI workarounds required by the stock-player mod.
    wired output.
 5. Recovery and validation tooling suitable for public R1 firmware releases.
 
-## First hardening changes
+## Implemented audiobook changes
 
 - Periodic resume checkpoints run on a background worker instead of the LVGL
   interface thread.
@@ -48,6 +48,31 @@ and UI workarounds required by the stock-player mod.
 - A headless R1 simulator test runs in CI. It scans a generated multipart MP3
   book and M4B, saves a listening position, restarts the player, and verifies
   that Continue resumes the correct part directly at that position.
+- The Audiobooks home screen exposes Library, Series, Authors, Continue,
+  Bookmarks, and Folders as direct views with distinct icons.
+- Manual bookmarks can be added from Now Playing, opened per book, listed
+  globally, resumed directly, and deleted.
+- Book summaries are indexed from common MP4/M4B description/comment atoms and
+  ID3 comment or description fields, with bounded allocations for malformed
+  tags.
+- The Folders view uses the indexed card hierarchy instead of walking the SD
+  card synchronously on every tap.
+- Album art and controls remain in the ordinary Now Playing surface, with
+  audiobook skips, speed, chapters, summary, bookmarks, and sleep behavior.
+
+## R1 reliability work
+
+- The firmware packer converts shell scripts to Unix line endings and refuses
+  to package a touch-loader script that still contains carriage returns.
+- Touch is selected by `EV_ABS` plus `INPUT_PROP_DIRECT`; physical buttons are
+  selected by their kernel device names. No feature relies on touch being
+  `/dev/input/event1`.
+- An adversarial device test occupies `event1` with a non-touch absolute-input
+  device, reloads the real panel as `event4`, and verifies that UI touch and
+  wake-key monitoring both open `event4` while hardware controls retain their
+  own nodes.
+- A local ADB control FIFO can tap, swipe, wake, query, and capture the real R1
+  framebuffer without replacing the physical touchscreen.
 
 ## Testing on a PC
 
@@ -75,6 +100,9 @@ original project history and attribution.
 
 ## Release status
 
-This fork is experimental until it passes the R1 acceptance matrix: long-form
-playback, repeated sleep/wake, physical controls, wired/USB/Bluetooth output,
-large libraries, multipart resume, card replacement, and stock recovery.
+Audiobook Edition 0.1.0 is a public preview for the original HiBy R1. Target
+and host builds, ABI checks, catalog integrity, single- and multipart resume,
+manual bookmarks, automatic part advance, live UI control, clean boot, and
+normal plus delayed touch-probe scenarios have passed. Long-duration playback,
+very large personal libraries, and the broad range of USB/Bluetooth hardware
+still benefit from community testing.

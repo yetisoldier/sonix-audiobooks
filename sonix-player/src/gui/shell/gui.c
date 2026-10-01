@@ -21,6 +21,7 @@
 #include "src/gui/settings/kblayoutpage.h"
 #include "src/gui/settings/screensaver.h"
 #include "src/gui/library/audiobooks.h"
+#include "src/gui/library/audiobookextras.h"
 #include "src/gui/settings/devoptions.h"
 #include "src/gui/ebook/ebookmarkspage.h"
 #include "src/gui/ebook/ebookpage.h"
@@ -569,6 +570,10 @@ void gui_init(gui_config_t *cfg) {
 	audiobooksettings_screen = lv_obj_create(NULL);
 	audiobookcontrols_screen = lv_obj_create(NULL);
 	audiobookscan_screen = lv_obj_create(NULL);
+	audiobookfolders_screen = lv_obj_create(NULL);
+	audiobookmarks_screen = lv_obj_create(NULL);
+	audiobookmarklist_screen = lv_obj_create(NULL);
+	audiobooksummary_screen = lv_obj_create(NULL);
 	chapters_screen = lv_obj_create(NULL);
 	queue_screen = lv_obj_create(NULL);
 	details_screen = lv_obj_create(NULL);
@@ -673,6 +678,7 @@ void gui_init(gui_config_t *cfg) {
 	search_init(cfg);
 	medialist_init(cfg);
 	playlistpage_init(cfg);
+	audiobookextras_init(cfg);
 	audiobooks_init(cfg);
 	chapters_init(cfg);
 	trackmenu_init(cfg);

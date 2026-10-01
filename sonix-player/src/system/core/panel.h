@@ -21,8 +21,7 @@
 // moves nothing: the panel is free.
 void panel_touch_enable(bool enabled);
 
-// The evdev node LVGL's indev opened ("/dev/input/event1", or event0 when the
-// first was absent). NULL when there is no touch device.
+// The evdev node LVGL's indev opened. NULL when there is no touch device.
 const char *panel_touch_device(void);
 
 #endif /* PANEL_H */

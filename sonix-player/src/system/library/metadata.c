@@ -99,6 +99,95 @@ static bool replaygain_field(song_metadata_t *out, const char *key, const char *
 static __thread bool lyrics_wanted;
 static __thread char *lyrics_found;
 
+#define DESCRIPTION_MAX_BYTES (8u * 1024u)
+
+static __thread bool description_wanted;
+static __thread char *description_found;
+static __thread int description_found_rank;
+
+static bool description_tag_break(const char *tag, size_t len) {
+	while (len && isspace((unsigned char)*tag)) {
+		tag++;
+		len--;
+	}
+	if (len && *tag == '/') {
+		tag++;
+		len--;
+	}
+	return (len >= 1 && (tag[0] == 'p' || tag[0] == 'P') && (len == 1 || isspace((unsigned char)tag[1]))) ||
+		   (len >= 2 && (tag[0] == 'b' || tag[0] == 'B') && (tag[1] == 'r' || tag[1] == 'R')) ||
+		   (len >= 2 && (tag[0] == 'l' || tag[0] == 'L') && (tag[1] == 'i' || tag[1] == 'I')) ||
+		   (len >= 3 && (tag[0] == 'd' || tag[0] == 'D') && (tag[1] == 'i' || tag[1] == 'I') &&
+			(tag[2] == 'v' || tag[2] == 'V'));
+}
+
+static void description_offer(const char *text, size_t len, int rank) {
+	if (!description_wanted || !text || len == 0 || (description_found && rank <= description_found_rank)) {
+		return;
+	}
+	if (len > DESCRIPTION_MAX_BYTES) {
+		len = DESCRIPTION_MAX_BYTES;
+	}
+	// Trim terminal NULs and whitespace. Interior newlines are preserved for
+	// the wrapping summary page.
+	while (len > 0 && (text[len - 1] == '\0' || text[len - 1] == ' ' || text[len - 1] == '\t' ||
+					 text[len - 1] == '\r' || text[len - 1] == '\n')) {
+		len--;
+	}
+	while (len > 0 && (*text == ' ' || *text == '\t' || *text == '\r' || *text == '\n')) {
+		text++;
+		len--;
+	}
+	if (len == 0) {
+		return;
+	}
+	char *plain = malloc(len + 1);
+	if (!plain) return;
+	size_t written = 0;
+	for (size_t i = 0; i < len;) {
+		if (text[i] == '<') {
+			const char *end = memchr(text + i + 1, '>', len - i - 1);
+			if (end) {
+				size_t tag_len = (size_t)(end - (text + i + 1));
+				if (description_tag_break(text + i + 1, tag_len) && written && plain[written - 1] != '\n') {
+					plain[written++] = '\n';
+				}
+				i = (size_t)(end - text) + 1;
+				continue;
+			}
+		}
+		static const struct {
+			const char *entity;
+			const char *value;
+		} entities[] = {
+			{"&amp;", "&"}, {"&quot;", "\""}, {"&#39;", "'"}, {"&apos;", "'"}, {"&lt;", "<"}, {"&gt;", ">"}, {"&nbsp;", " "},
+		};
+		bool entity = false;
+		for (size_t e = 0; e < sizeof(entities) / sizeof(entities[0]); e++) {
+			size_t entity_len = strlen(entities[e].entity);
+			if (entity_len <= len - i && memcmp(text + i, entities[e].entity, entity_len) == 0) {
+				plain[written++] = entities[e].value[0];
+				i += entity_len;
+				entity = true;
+				break;
+			}
+		}
+		if (entity) continue;
+		char c = text[i++];
+		if (c == '\r') c = '\n';
+		if (c == '\n' && written && plain[written - 1] == '\n') continue;
+		plain[written++] = c;
+	}
+	while (written && isspace((unsigned char)plain[written - 1])) written--;
+	plain[written] = '\0';
+	if (written) {
+		free(description_found);
+		description_found = plain;
+		description_found_rank = rank;
+	}
+	else free(plain);
+}
+
 // Whether the text carries LRC time tags: "[mm:ss" at the start of a line.
 static bool lyrics_have_times(const char *text, size_t len) {
 	for (size_t i = 0; i + 5 < len; i++) {
@@ -157,6 +246,10 @@ static void apply_vorbis_comment(song_metadata_t *out, const char *comment, size
 	if (strcmp(key, "LYRICS") == 0 || strcmp(key, "UNSYNCEDLYRICS") == 0 || strcmp(key, "UNSYNCED LYRICS") == 0 ||
 		strcmp(key, "SYNCEDLYRICS") == 0) {
 		lyrics_offer(value, value_len);
+		return;
+	}
+	if (strcmp(key, "DESCRIPTION") == 0 || strcmp(key, "SUMMARY") == 0 || strcmp(key, "COMMENT") == 0) {
+		description_offer(value, value_len, strcmp(key, "COMMENT") == 0 ? 1 : 3);
 		return;
 	}
 
@@ -506,10 +599,12 @@ static void resolve_tcon_genre(const char *raw, char *out, size_t out_size) {
 	copy_bounded(out, out_size, raw);
 }
 
-// TXXX:SERIES and TXXX:SERIES-PART, in any of the four encodings. The
-// description ends at a NUL, which in UTF-16 is two zero bytes on an even
-// offset; the value follows it. These win over MVNM / MVIN.
-static void txxx_series(song_metadata_t *out, uint8_t encoding, const uint8_t *data, size_t len) {
+// Named TXXX fields, in any of the four encodings. The description ends at a
+// NUL, which in UTF-16 is two zero bytes on an even offset; the value follows
+// it. SERIES and SERIES-PART win over MVNM/MVIN. Some encoders, including
+// FFmpeg, write a generic comment here rather than in COMM, so those familiar
+// names are also accepted as an audiobook summary.
+static void txxx_fields(song_metadata_t *out, uint8_t encoding, const uint8_t *data, size_t len) {
 	bool wide = encoding == 0x01 || encoding == 0x02;
 	size_t end = 0;
 	if (wide) {
@@ -533,14 +628,23 @@ static void txxx_series(song_metadata_t *out, uint8_t encoding, const uint8_t *d
 	}
 	bool series = strcmp(key, "SERIES") == 0;
 	bool part = strcmp(key, "SERIES-PART") == 0 || strcmp(key, "SERIES_PART") == 0 || strcmp(key, "SERIESPART") == 0;
-	if (!series && !part) {
+	bool description = strcmp(key, "DESCRIPTION") == 0 || strcmp(key, "SUMMARY") == 0 || strcmp(key, "COMMENT") == 0;
+	if (!series && !part && !description) {
 		return;
 	}
 	char value[256];
-	id3_decode_text(encoding, data + value_at, len - value_at, value, sizeof(value));
-	if (series) {
+	if (description) {
+		size_t out_size = (len - value_at) * 2 + 16;
+		char *long_value = malloc(out_size);
+		if (!long_value) return;
+		id3_decode_text(encoding, data + value_at, len - value_at, long_value, out_size);
+		description_offer(long_value, strlen(long_value), strcmp(key, "COMMENT") == 0 ? 1 : 3);
+		free(long_value);
+	} else if (series) {
+		id3_decode_text(encoding, data + value_at, len - value_at, value, sizeof(value));
 		copy_bounded(out->series, sizeof(out->series), value);
 	} else {
+		id3_decode_text(encoding, data + value_at, len - value_at, value, sizeof(value));
 		copy_bounded(out->series_part, sizeof(out->series_part), value);
 	}
 }
@@ -594,6 +698,27 @@ static void id3_lyrics_uslt(const uint8_t *buf, size_t len) {
 	}
 	id3_decode_text(encoding, buf + pos, len - pos, text, out_size);
 	lyrics_offer(text, strlen(text));
+	free(text);
+}
+
+// COMM: encoding, three-byte language, a terminated short description, then
+// the actual comment. Mp3tag writes the publisher's summary here.
+static void id3_description_comm(const uint8_t *buf, size_t len) {
+	if (len < 5) {
+		return;
+	}
+	uint8_t encoding = buf[0];
+	size_t pos = 4 + id3_skip_string(encoding, buf + 4, len - 4);
+	if (pos >= len) {
+		return;
+	}
+	size_t out_size = (len - pos) * 2 + 16;
+	char *text = malloc(out_size);
+	if (!text) {
+		return;
+	}
+	id3_decode_text(encoding, buf + pos, len - pos, text, out_size);
+	description_offer(text, strlen(text), 2);
 	free(text);
 }
 
@@ -719,7 +844,7 @@ static bool read_id3v2(FILE *f, song_metadata_t *out) {
 			static const char *const V22_MAP[][2] = {{"TT2", "TIT2"}, {"TP1", "TPE1"}, {"TP2", "TPE2"},
 													 {"TAL", "TALB"}, {"TCO", "TCON"}, {"TRK", "TRCK"},
 													 {"TPA", "TPOS"}, {"TYE", "TYER"}, {"TXX", "TXXX"},
-													 {"ULT", "USLT"}, {"SLT", "SYLT"}};
+												 {"ULT", "USLT"}, {"SLT", "SYLT"}, {"COM", "COMM"}};
 			for (size_t i = 0; i < sizeof(V22_MAP) / sizeof(V22_MAP[0]); i++) {
 				if (strcmp(frame_id, V22_MAP[i][0]) == 0) {
 					snprintf(frame_id, sizeof(frame_id), "%s", V22_MAP[i][1]);
@@ -731,8 +856,9 @@ static bool read_id3v2(FILE *f, song_metadata_t *out) {
 		bool wanted = strcmp(frame_id, "MVNM") == 0 || strcmp(frame_id, "MVIN") == 0 || strcmp(frame_id, "TIT2") == 0 || strcmp(frame_id, "TPE1") == 0 || strcmp(frame_id, "TPE2") == 0 || strcmp(frame_id, "TALB") == 0 || strcmp(frame_id, "TCON") == 0 || strcmp(frame_id, "TRCK") == 0 || strcmp(frame_id, "TPOS") == 0 || strcmp(frame_id, "TYER") == 0 || strcmp(frame_id, "TDRC") == 0 || strcmp(frame_id, "TXXX") == 0;
 
 		bool lyrics_frame = lyrics_wanted && (strcmp(frame_id, "USLT") == 0 || strcmp(frame_id, "SYLT") == 0);
+		bool description_frame = description_wanted && strcmp(frame_id, "COMM") == 0;
 
-		if (!wanted && !lyrics_frame) {
+		if (!wanted && !lyrics_frame && !description_frame) {
 			fseeko(f, next_frame, SEEK_SET);
 			continue;
 		}
@@ -754,6 +880,11 @@ static bool read_id3v2(FILE *f, song_metadata_t *out) {
 			free(buf);
 			continue;
 		}
+		if (description_frame) {
+			id3_description_comm(buf, frame_size);
+			free(buf);
+			continue;
+		}
 
 		uint8_t encoding = buf[0];
 
@@ -761,7 +892,7 @@ static bool read_id3v2(FILE *f, song_metadata_t *out) {
 		// then the text. It is where every tagger writes ReplayGain on an MP3,
 		// and where Mp3tag and its kin write an audiobook's series.
 		if (strcmp(frame_id, "TXXX") == 0) {
-			txxx_series(out, encoding, buf + 1, frame_size - 1);
+			txxx_fields(out, encoding, buf + 1, frame_size - 1);
 			// ReplayGain in the single-byte encodings only.
 			if (encoding == 0 || encoding == 3) {
 				const char *text = (const char *)buf + 1;
@@ -1253,6 +1384,10 @@ static void read_mp4_metadata(const char *filepath, song_metadata_t *out) {
 	if (lyrics) {
 		lyrics_offer(lyrics, strlen(lyrics));
 	}
+	const char *description = mp4_tag_description(m);
+	if (description) {
+		description_offer(description, strlen(description), 3);
+	}
 	out->track_number = mp4_tag_track_number(m);
 	out->disc_number = mp4_tag_disc_number(m);
 
@@ -1513,5 +1648,26 @@ char *metadata_read_lyrics(const char *filepath) {
 
 	char *found = lyrics_found;
 	lyrics_found = NULL;
+	return found;
+}
+
+char *metadata_read_with_description(const char *filepath, song_metadata_t *out) {
+	if (!out) return NULL;
+	description_wanted = true;
+	description_found = NULL;
+	description_found_rank = 0;
+	metadata_read(filepath, out);
+	description_wanted = false;
+
+	char *found = description_found;
+	description_found = NULL;
+	return found;
+}
+
+char *metadata_read_description(const char *filepath) {
+	song_metadata_t *scratch = malloc(sizeof(*scratch));
+	if (!scratch) return NULL;
+	char *found = metadata_read_with_description(filepath, scratch);
+	free(scratch);
 	return found;
 }

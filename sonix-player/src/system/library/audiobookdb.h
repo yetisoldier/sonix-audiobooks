@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 // The audiobook index: a small SQLite database of the books in the Audiobooks
 // folder, separate from the music library (which ignores .m4b -- an audiobook
@@ -170,5 +171,41 @@ bool audiobookdb_get_position(const char *book_path, char *file_out, size_t file
 // to survive every way a track can change and the first one missed puts
 // audiobook controls over a song. The path is still true after a reboot.
 bool audiobookdb_book_for_file(const char *file_path, char *book_out, size_t book_size);
+
+// Title-page metadata indexed during the scan. Any output may be NULL/zero.
+bool audiobookdb_book_details(const char *book_path, char *title_out, size_t title_size,
+								  char *author_out, size_t author_size, char *series_out, size_t series_size,
+								  char *summary_out, size_t summary_size);
+
+// ---------------------------------------------------------------------------
+// Folder hierarchy
+// ---------------------------------------------------------------------------
+
+// Entries directly below `folder`, folders first and then books. `path` is a
+// folder to descend into when `is_folder` is true and a catalog book path to
+// play otherwise. The hierarchy comes from the scan index, so non-audio files
+// and empty directories never clutter it.
+typedef bool (*audiobook_folder_cb)(const char *name, const char *path, bool is_folder, void *user);
+int audiobookdb_folder_entries_for_each(const char *folder, audiobook_folder_cb cb, void *user);
+
+// ---------------------------------------------------------------------------
+// Manual bookmarks
+// ---------------------------------------------------------------------------
+
+#define AUDIOBOOK_BOOKMARKS_PER_BOOK 64
+
+// Adds a mark unless this book already has the bounded maximum. A second mark
+// within two seconds of the same file replaces the first rather than creating
+// an accidental duplicate.
+bool audiobookdb_bookmark_add(const char *book, const char *file, double seconds, const char *label);
+bool audiobookdb_bookmark_remove(int64_t id);
+int audiobookdb_bookmark_count(const char *book); // NULL/empty: all visible books
+
+typedef bool (*audiobook_bookmark_cb)(int64_t id, const char *file, double seconds,
+									 const char *label, int64_t created_at, void *user);
+int audiobookdb_bookmarks_for_each(const char *book, audiobook_bookmark_cb cb, void *user);
+
+typedef bool (*audiobook_bookmarked_book_cb)(const char *title, const char *book, int count, void *user);
+int audiobookdb_bookmarked_books_for_each(audiobook_bookmarked_book_cb cb, void *user);
 
 #endif /* AUDIOBOOKDB_H */

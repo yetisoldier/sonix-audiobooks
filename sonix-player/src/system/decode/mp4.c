@@ -99,6 +99,8 @@ struct mp4_file {
 	char series[256];	  // ----:SERIES, else the movement name
 	char series_part[32]; // ----:SERIES-PART, else the movement number
 	char *lyrics;		  // the ©lyr atom, malloc'd; NULL when absent
+	char *description;   // ldes, desc or ©cmt; malloc'd
+	int description_rank; // ldes wins over desc, which wins over a comment
 
 	uint64_t cover_off;
 	uint32_t cover_size;
@@ -509,6 +511,27 @@ static void copy_text(char *dst, size_t dst_size, const unsigned char *src, size
 	dst[len] = '\0';
 }
 
+static void set_description(mp4_file_t *m, const unsigned char *value, size_t len, int rank) {
+	if (!m || !value || len == 0 || rank < m->description_rank) {
+		return;
+	}
+	// Descriptions are displayed as prose, not retained as an unbounded tag.
+	// Eight KiB is several screens on the R1 and prevents a malformed atom from
+	// turning a metadata read into a large allocation.
+	if (len > 8192) {
+		len = 8192;
+	}
+	char *text = malloc(len + 1);
+	if (!text) {
+		return;
+	}
+	memcpy(text, value, len);
+	text[len] = '\0';
+	free(m->description);
+	m->description = text;
+	m->description_rank = rank;
+}
+
 static const char *const GENRES[] = {
 	"Blues", "Classic Rock", "Country", "Dance", "Disco", "Funk", "Grunge", "Hip-Hop", "Jazz", "Metal",
 	"New Age", "Oldies", "Other", "Pop", "R&B", "Rap", "Reggae", "Rock", "Techno", "Industrial",
@@ -634,6 +657,15 @@ static void parse_ilst(mp4_file_t *m, const box_t *ilst) {
 					m->lyrics[value_len] = '\0';
 				}
 			}
+			break;
+		case FOURCC('l', 'd', 'e', 's'):
+			set_description(m, value, value_len, 3);
+			break;
+		case FOURCC('d', 'e', 's', 'c'):
+			set_description(m, value, value_len, 2);
+			break;
+		case FOURCC(0xA9, 'c', 'm', 't'):
+			set_description(m, value, value_len, 1);
 			break;
 		// The movement pair, which audiobook taggers use for the series: a name,
 		// and a 16-bit number.
@@ -1285,6 +1317,7 @@ void mp4_close(mp4_file_t *m) {
 	}
 	free(m->chapters);
 	free(m->lyrics);
+	free(m->description);
 	free(m->size_cache);
 	if (m->fd >= 0) {
 		close(m->fd);
@@ -1491,6 +1524,7 @@ const char *mp4_tag_series(const mp4_file_t *m) { return m ? m->series : ""; }
 
 const char *mp4_tag_series_part(const mp4_file_t *m) { return m ? m->series_part : ""; }
 const char *mp4_tag_lyrics(const mp4_file_t *m) { return m ? m->lyrics : NULL; }
+const char *mp4_tag_description(const mp4_file_t *m) { return m ? m->description : NULL; }
 
 const char *mp4_tag_freeform(const mp4_file_t *m, const char *name) {
 	if (!m || !name) {

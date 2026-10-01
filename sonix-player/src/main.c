@@ -1613,8 +1613,8 @@ static void free_rot_pages_cb(void *unused) {
 bool display_rotation_supported(void) { return fb_display != NULL; }
 
 // The node lv_evdev_create() actually opened. Remembered because the emulator
-// must open exactly that one instead of guessing: touch is event1 on this
-// device, but the event0 fallback exists because that is not guaranteed.
+// must open exactly that one instead of guessing: touch is normally event1 on
+// this device, but input event numbers depend on driver probe order.
 static char fb_touch_node[32];
 
 const char *panel_touch_device(void) { return fb_touch_node[0] ? fb_touch_node : NULL; }
@@ -1627,6 +1627,43 @@ void panel_touch_enable(bool enabled) {
 	if (fb_touch) {
 		lv_indev_enable(fb_touch, enabled);
 	}
+}
+
+// Input event numbers depend on probe order. Normally the panel is event1,
+// but a slow or recovered touch probe can assign any later number. Find the
+// device that actually reports absolute coordinates instead of accidentally
+// opening a volume-key ADC and leaving the screen apparently frozen.
+static bool find_touch_node(char *out, size_t out_size) {
+	for (int attempt = 0; attempt < 50; attempt++) {
+		for (int event = 0; event < 16; event++) {
+			char ev_path[96];
+			snprintf(ev_path, sizeof(ev_path), "/sys/class/input/event%d/device/capabilities/ev", event);
+			FILE *f = fopen(ev_path, "r");
+			if (!f) {
+				continue;
+			}
+			unsigned long capabilities = 0;
+			bool parsed = fscanf(f, "%lx", &capabilities) == 1;
+			fclose(f);
+
+			char prop_path[96];
+			snprintf(prop_path, sizeof(prop_path), "/sys/class/input/event%d/device/properties", event);
+			f = fopen(prop_path, "r");
+			unsigned long properties = 0;
+			bool prop_parsed = f && fscanf(f, "%lx", &properties) == 1;
+			if (f) {
+				fclose(f);
+			}
+
+			if (parsed && prop_parsed && (capabilities & (1UL << EV_ABS)) &&
+				(properties & (1UL << INPUT_PROP_DIRECT))) {
+				snprintf(out, out_size, "/dev/input/event%d", event);
+				return true;
+			}
+		}
+		usleep(100000);
+	}
+	return false;
 }
 
 bool display_get_rotated(void) { return fb_rotated; }
@@ -1698,14 +1735,12 @@ static lv_display_t *init_target_display(void) {
 		lv_linux_fbdev_set_file(disp, "/dev/fb0");
 	}
 
-	lv_indev_t *touch = lv_evdev_create(LV_INDEV_TYPE_POINTER, "/dev/input/event1");
-	if (touch) {
-		snprintf(fb_touch_node, sizeof(fb_touch_node), "%s", "/dev/input/event1");
-	} else {
-		fprintf(stderr, "Warning: Failed to open /dev/input/event1. Trying event0...\n");
-		touch = lv_evdev_create(LV_INDEV_TYPE_POINTER, "/dev/input/event0");
+	char touch_node[sizeof(fb_touch_node)] = {0};
+	lv_indev_t *touch = NULL;
+	if (find_touch_node(touch_node, sizeof(touch_node))) {
+		touch = lv_evdev_create(LV_INDEV_TYPE_POINTER, touch_node);
 		if (touch) {
-			snprintf(fb_touch_node, sizeof(fb_touch_node), "%s", "/dev/input/event0");
+			snprintf(fb_touch_node, sizeof(fb_touch_node), "%s", touch_node);
 		}
 	}
 

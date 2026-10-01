@@ -322,6 +322,25 @@ build_one() {
 	MODEL_N="$(cd "$ASSETS_DIR/$MODEL_DIR" && find . -type f | wc -l | tr -d ' ')"
 	say "    $MODEL_DIR/: $MODEL_N files"
 
+	# A Windows checkout can turn the overlay's shell scripts into CRLF files.
+	# Besides breaking shebangs, CRLF also breaks a backslash continuation in a
+	# script sourced by init. The R1 touchscreen loader is intentionally sourced
+	# and has no shebang, so normalize every *.sh as well as shebang scripts.
+	while IFS= read -r -d '' script; do
+		if [[ "$script" == *.sh ]] || head -c 2 "$script" | grep -q '^#!'; then
+			sed -i 's/\r$//' "$script"
+		fi
+	done < <(find "$SQUASH_DIR" -type f -print0)
+
+	# A carriage return in a module loader can leave the device without its
+	# touchscreen while the rest of the player appears to boot normally. Refuse
+	# to produce such an image rather than discovering it after a flash.
+	while IFS= read -r -d '' script; do
+		if LC_ALL=C grep -q $'\r' "$script"; then
+			die "$script still contains CRLF after normalization."
+		fi
+	done < <(find "$SQUASH_DIR/module_driver" -type f -name '*.sh' -print0 2>/dev/null)
+
 	# The streaming keys go in sealed, as streaming-keys.bin. One left in the
 	# clear in the assets is not shipped: an image is unpacked by anyone who
 	# downloads it. See tools/seal_streamkeys.py in sonix-player.

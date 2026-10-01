@@ -9,6 +9,7 @@
 
 #include "src/core/lv_obj.h"
 #include "src/core/lv_obj_pos.h"
+#include "src/gui/library/audiobookextras.h"
 #include "src/gui/library/browser.h"
 #include "src/gui/nowplaying/chapters.h"
 #include "src/gui/nowplaying/cover.h"
@@ -163,7 +164,7 @@ static lv_obj_t *cover_placeholder_icon;
 static lv_obj_t *prev_btn_obj;
 static lv_obj_t *next_btn_obj;
 static lv_obj_t *more_btn_obj;
-static lv_obj_t *more_btn_icon; // ellipsis on a track, chapters on a book
+static lv_obj_t *more_btn_icon; // ellipsis on a track or book, episodes on a podcast
 static lv_obj_t *repeat_btn_obj;
 static lv_obj_t *speed_btn_obj;	 // stands in the repeat button's place on a book
 static lv_obj_t *speed_btn_icon;
@@ -184,8 +185,8 @@ static bool live_custom_nav;	   // on a station from a list, where they change s
 // Audiobook mode. A book is one long file, not a queue of songs: previous and
 // next have nothing to move to, and what a listener wants from those two
 // buttons is to go back ten seconds because they missed a sentence. So the
-// transport becomes a pair of ten-second jumps, the overflow menu becomes the
-// chapter list, and the star and the repeat mode -- both of which belong to
+// transport becomes a pair of ten-second jumps, the overflow menu holds the
+// book tools, and the star and the repeat mode -- both of which belong to
 // the music library and its queue -- go away rather than sit there doing
 // something invisible to a book.
 static bool audiobook_mode;
@@ -489,15 +490,14 @@ static void apply_audiobook_mode(bool book, bool podcast) {
 									: forward == AUDIOBOOK_SKIP_LONG ? &icon_next_30
 																	 : &icon_next_10);
 	}
-	// The chapter glyph goes on for every book, marked up or not: one that has
-	// no chapters says so when the button is pressed, which is a plainer
-	// answer than a button that quietly means something else on some books.
+	// A book has several actions behind this button now, so it uses the same
+	// familiar overflow glyph as a music track. Chapters remain the first item.
 	//
 	// On a podcast the same button goes straight to the episodes, the only
 	// thing wanted from it, rather than to a menu whose one useful entry would
 	// always be picked.
 	if (more_btn_icon) {
-		lv_image_set_src(more_btn_icon, book			 ? &icon_chapter
+		lv_image_set_src(more_btn_icon, book			 ? &icon_ellipsis_vertical
 										: podcast ? &icon_podcast_episodes
 												  : &icon_ellipsis_vertical);
 	}
@@ -3287,15 +3287,38 @@ void player_key_prev(void) {
 	update_progress();
 }
 
-// The overflow button: the chapter list on a book, the episode queue on a
-// podcast, the track menu on anything else.
+static void audiobook_chapters_action(void *user) {
+	(void)user;
+	if (audiobook_has_chapters) chapters_open();
+	else gui_notify_popup("player_this_audiobook_has_no_chapters_2");
+}
+
+static void audiobook_add_bookmark_action(void *user) {
+	(void)user;
+	audiobookmarks_add_current();
+}
+
+static void audiobook_bookmarks_action(void *user) {
+	(void)user;
+	audiobookmarks_open_current();
+}
+
+static void audiobook_summary_action(void *user) {
+	(void)user;
+	audiobooksummary_open_current();
+}
+
+// The overflow button: book tools on an audiobook, the episode queue on a
+// podcast, and the track menu on anything else.
 static void more_btn_event_cb(lv_event_t *e) {
 	if (audiobook_mode) {
-		if (audiobook_has_chapters) {
-			chapters_open();
-		} else {
-			gui_notify_popup("player_this_audiobook_has_no_chapters_2");
-		}
+		static const popover_item_t items[] = {
+			{"chapters", audiobook_chapters_action, NULL, false},
+			{"audiobook_add_bookmark", audiobook_add_bookmark_action, NULL, false},
+			{"audiobook_bookmarks", audiobook_bookmarks_action, NULL, false},
+			{"audiobook_summary", audiobook_summary_action, NULL, false},
+		};
+		popover_show(lv_event_get_current_target(e), items, (int)(sizeof(items) / sizeof(items[0])));
 		return;
 	}
 	// A podcast has no chapters: it has episodes, and the episodes are already

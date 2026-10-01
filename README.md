@@ -1,6 +1,6 @@
 ﻿# Sonix Player
 
-> **Audiobook-focused fork:** this repository is the experimental successor to
+> **Audiobook-focused fork:** this repository is the public-preview successor to
 > the stock-based HiBy R1 Audiobook Mod. See
 > [AUDIOBOOK_EDITION.md](AUDIOBOOK_EDITION.md) for its goals, fork-specific
 > changes, upstream relationship, and release status. The original Sonix Player
@@ -9,6 +9,104 @@
 
 A replacement player for the **HiBy R3 Pro II** and the **HiBy R1**, written on
 LVGL.
+
+The downloadable Audiobook Edition firmware currently targets the original
+HiBy R1 only. It is not an image for the R1 MIDI or R3 Pro II.
+
+## Install the R1 release
+
+1. Download `r1.upt` from the
+   [latest release](https://github.com/yetisoldier/sonix-player/releases/latest).
+2. Charge the R1 above 30% and keep a copy of HiBy's stock R1 firmware for
+   recovery.
+3. Put music in `/Music` and audiobooks in `/Audiobooks` on a microSD card.
+4. Copy `r1.upt` to the root of that card.
+5. On Sonix Player, open **Settings > System > Update firmware > From SD
+   card**. From stock firmware, use its SD-card firmware update command.
+6. Let the update complete and reboot. Do not remove power or the card while
+   it is flashing.
+7. Open Music or Audiobooks and run its library scan after adding or replacing
+   a card.
+
+The operation is reversible by flashing the official HiBy R1 firmware. ADB is
+off unless enabled in Developer options; its saved switch can be used across
+reboots while developing.
+
+## Screenshots
+
+| Home | Audiobook views |
+|---|---|
+| <img src="docs/screenshots/home.png" width="240" alt="Sonix Audiobook Edition home screen"> | <img src="docs/screenshots/audiobooks.png" width="240" alt="Audiobook Library, Series, Authors, Continue, Bookmarks and Folders views"> |
+
+<img src="docs/screenshots/audiobook-now-playing.png" width="240" alt="Audiobook now-playing screen">
+
+## What this fork changes
+
+This project is based on
+[Jepl4r/sonix-player](https://github.com/Jepl4r/sonix-player). Upstream Sonix
+Player already provides an excellent base: separate Music and Audiobooks
+libraries, multipart books, embedded chapters, authors and series, playback
+speed, configurable skips, a sleep timer, Bluetooth, USB audio, and USB
+storage. This fork preserves those features and concentrates on audiobook
+workflow and HiBy R1 reliability.
+
+It is also the next-generation companion to the stock-based
+[HiBy R1 Audiobook Mod](https://github.com/yetisoldier/Hiby-R1-Audiobook-Mod).
+Use that project to keep the familiar HiBy interface. Use this one for deeper
+integration, a purpose-built audiobook interface, and a player that can be
+changed and tested at source level.
+
+| Area | Upstream Sonix Player | Audiobook Edition |
+|---|---|---|
+| Audiobook home | Library, author, series, continue and finished browsing | Six direct views: Library, Series, Authors, Continue, Bookmarks and Folders, with distinct icons |
+| Resume | Per-book position and multipart resume | Background checkpoints, forced saves on important transitions, direct part resume, completion reset, and card-swap protection |
+| Bookmarks | Playback position only | User-created positions collected in a global Bookmarks view, with direct jump and deletion |
+| Book information | Core tags and artwork | Publisher summary/description on the book page, plus title, author, series and artwork |
+| Folder browsing | Books are discovered recursively | Indexed `Audiobooks/Author/Series/Book` hierarchy that opens quickly without rescanning the card for every tap |
+| R1 validation | Host and device operation | Repeatable audiobook smoke tests plus an ADB UI-control channel for taps, swipes, wake, status and screenshots |
+
+### Audiobook behavior
+
+- Audiobooks live under `/Audiobooks` and remain separate from `/Music`.
+- A single audio file can be a book. Files sharing one book folder or album
+  form a multipart book in natural track order, including `CD 1` and `Disc 2`
+  folders.
+- Resume is stored per book and returns directly to the saved file and time.
+  Checkpoints are written off the UI thread so a slow SD card does not stall
+  touch or physical controls.
+- Pause, seek, stop, card removal and shutdown flush the latest position. A
+  queued write is tied to its original card database and cannot leak into a
+  replacement card.
+- Finishing within 45 seconds of the final part marks a book complete. Starting
+  that completed book again begins at the start.
+- Manual bookmarks supplement automatic resume and remain available from the
+  audiobook home screen.
+- Book descriptions are read from common MP4 and ID3 summary or comment
+  metadata. Missing author or series information falls back to the folder
+  hierarchy; books without a series continue to work normally.
+
+### Reliability changes
+
+- Audio completion signals the controller immediately for more reliable
+  multipart transitions instead of waiting for the UI progress timer.
+- Resume checkpoints and catalog work avoid blocking the LVGL interface.
+- Bluetooth pairing reconciles a successfully saved bond even when BlueZ's
+  pairing call times out after the earbuds have already disconnected.
+- Suspend and wake restore the real output route and DAC level even when the
+  kernel rejects a suspend attempt.
+- The R1 touchscreen loader is normalized and audited during packaging. The
+  player identifies the direct-touch panel and physical button devices by
+  capability and kernel name instead of assuming fixed `/dev/input/eventN`
+  numbers. This was tested with the real panel deliberately moved from
+  `event1` to `event4`.
+- Real-time CPU use is bounded so a faulty worker cannot indefinitely starve
+  the single-core UI and kernel tasks.
+
+See [AUDIOBOOK_EDITION.md](AUDIOBOOK_EDITION.md) for project goals and release
+status, [FEATURES.md](FEATURES.md) for the complete inherited and fork feature
+set, and [DEVICE_TESTING.md](DEVICE_TESTING.md) for ADB-based device automation.
+
+The original build and architecture documentation continues below.
 
 ## Supported players
 
@@ -179,6 +277,11 @@ The first run takes a while and does four things by itself:
 4. compiles and links `sonix_player`, and builds `sonix_launch` (see below)
 
 Steps 1 to 3 happen once. Later builds go straight to step 4.
+
+On WSL, keep the build tree and toolchain in the Linux filesystem (for example
+under `~/src`) rather than `/mnt/c`. Cross-toolchain and dependency tracking
+can be dramatically slower on the Windows-mounted filesystem. The finished
+binary can be copied back into the repository before packaging.
 
 Everything the device does not already carry is linked statically, so the
 result is one file to copy across with nothing to install beside it. The same
