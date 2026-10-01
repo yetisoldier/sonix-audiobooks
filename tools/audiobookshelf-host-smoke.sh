@@ -178,7 +178,29 @@ fi
 click 355 245 1       # Home -> Streaming
 click 175 700 2       # Streaming -> Audiobookshelf
 click 280 305 2       # library
-click 240 205 1       # first title
+click 240 180 2       # Authors toolbar
+scrot "$WORK/authors.png"
+click 240 200 2       # Test Author
+scrot "$WORK/author-books.png"
+click 43 88 1         # author books -> authors
+click 43 88 2         # authors -> all books
+click 390 180 2       # Series toolbar
+scrot "$WORK/series.png"
+click 240 200 2       # Fixture Series
+scrot "$WORK/series-books.png"
+click 43 88 1
+click 43 88 2
+click 80 180 1        # search keyboard
+scrot "$WORK/search-keyboard.png"
+click 390 680 0.2     # m on keyboard
+click 430 754 2       # submit search
+scrot "$WORK/search-results.png"
+grep -q '/search?q=m&limit=40' "$WORK/progress.requests" || fail "search did not reach server"
+grep -q 'filter=authors.YXV0aG9yLTE' "$WORK/progress.requests" || fail "author filter missing"
+grep -q 'sort=sequence.*filter=series.c2VyaWVzLTE' "$WORK/progress.requests" || fail "series order/filter missing"
+click 43 88 1         # search results -> libraries
+click 280 305 2       # reopen full library
+click 240 277 1       # first title below toolbar
 scrot "$WORK/action-confirm.png"
 click 330 475 1       # confirm download or local link
 
@@ -190,7 +212,7 @@ if [[ "$EXISTING" == 1 ]]; then
 		wait_for "uploaded existing local progress" 400 progress_uploaded
 	fi
 	sleep 2                # let the success toast release the title row
-	click 240 205 2        # the linked server title must now play locally
+	click 240 277 2        # the linked server title must now play locally
 	if [[ "$LOCAL_PROGRESS" == 1 ]]; then
 		wait_for "linked local playback" 100 grep -q "play requested.*Local Chapter One.mp3.*from 7" "$WORK/player.log"
 	else

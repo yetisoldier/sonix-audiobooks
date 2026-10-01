@@ -609,13 +609,20 @@ int audiobookshelf_libraries(audiobookshelf_library_t *out, int max) {
 }
 
 int audiobookshelf_items(const char *library_id, int page, audiobookshelf_item_t *out, int max, int *total_out) {
+	return audiobookshelf_filtered_items(library_id, page, "", out, max, total_out);
+}
+
+int audiobookshelf_filtered_items(const char *library_id, int page, const char *filter,
+	 audiobookshelf_item_t *out, int max, int *total_out) {
 	if (!library_id || !library_id[0] || !out || max <= 0) return 0;
 	if (max > ABS_PAGE_LIMIT) max = ABS_PAGE_LIMIT;
 	char id[ABS_ID_MAX * 3];
 	http_url_encode(library_id, id, sizeof(id));
-	char path[512];
-	snprintf(path, sizeof(path), "/api/libraries/%s/items?limit=%d&page=%d&sort=media.metadata.title&minified=0&collapseSeries=0",
-			 id, max, page < 0 ? 0 : page);
+	char encoded[600], path[1200];
+	http_url_encode(filter ? filter : "", encoded, sizeof(encoded));
+	snprintf(path, sizeof(path), "/api/libraries/%s/items?limit=%d&page=%d&sort=%s&minified=0&collapseseries=0&filter=%s",
+			 id, max, page < 0 ? 0 : page,
+			 filter && strncmp(filter, "series.", 7) == 0 ? "sequence" : "media.metadata.title", encoded);
 	char *body = NULL;
 	if (!api_request(path, NULL, &body, NULL, NULL)) {
 		free(body);
@@ -636,6 +643,78 @@ int audiobookshelf_items(const char *library_id, int page, audiobookshelf_item_t
 	json_free(&doc);
 	free(body);
 	return count;
+}
+
+void audiobookshelf_group_filter(bool series, const char *id, char *out, size_t size) {
+	static const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	char encoded[ABS_ID_MAX * 2];
+	size_t n = strlen(id), k = 0;
+	if (n >= ABS_ID_MAX) { if (size) out[0] = 0; return; }
+	for (size_t i = 0; i < n; i += 3) {
+		unsigned value = (unsigned char)id[i] << 16;
+		if (i + 1 < n) value |= (unsigned char)id[i + 1] << 8;
+		if (i + 2 < n) value |= (unsigned char)id[i + 2];
+		encoded[k++] = alphabet[(value >> 18) & 63];
+		encoded[k++] = alphabet[(value >> 12) & 63];
+		encoded[k++] = i + 1 < n ? alphabet[(value >> 6) & 63] : '=';
+		encoded[k++] = i + 2 < n ? alphabet[value & 63] : '=';
+	}
+	encoded[k] = 0;
+	snprintf(out, size, "%s.%s", series ? "series" : "authors", encoded);
+}
+
+static int group_compare(const void *a, const void *b) {
+	return strcasecmp(((const audiobookshelf_library_t *)a)->name, ((const audiobookshelf_library_t *)b)->name);
+}
+
+int audiobookshelf_groups(const char *library_id, bool series, audiobookshelf_library_t **out) {
+	char id[ABS_ID_MAX * 3], path[384], *body = NULL;
+	*out = NULL;
+	http_url_encode(library_id, id, sizeof(id));
+	snprintf(path, sizeof(path), "/api/libraries/%s/filterdata", id);
+	if (!api_request(path, NULL, &body, NULL, NULL)) { free(body); return -1; }
+	json_doc_t doc;
+	if (!json_parse(body, &doc)) { free(body); set_error("Invalid library filters."); return -1; }
+	int array = json_get(&doc, json_root(&doc), series ? "series" : "authors");
+	int count = json_len(&doc, array), written = 0;
+	audiobookshelf_library_t *groups = count > 0 ? calloc(count, sizeof(*groups)) : NULL;
+	if (count > 0 && !groups) { json_free(&doc); free(body); set_error("Not enough memory for library filters."); return -1; }
+	for (int i = 0; i < count; i++) {
+		int entry = json_at(&doc, array, i);
+		json_obj_str(&doc, entry, "id", groups[written].id, sizeof(groups[written].id));
+		json_obj_str(&doc, entry, "name", groups[written].name, sizeof(groups[written].name));
+		if (groups[written].id[0] && groups[written].name[0]) written++;
+	}
+	if (written > 1) qsort(groups, written, sizeof(*groups), group_compare);
+	json_free(&doc); free(body); *out = groups;
+	return written;
+}
+
+int audiobookshelf_search(const char *library_id, const char *query, audiobookshelf_item_t *out, int max) {
+	if (!library_id || !query || !query[0] || !out || max <= 0) return 0;
+	if (max > ABS_PAGE_LIMIT) max = ABS_PAGE_LIMIT;
+	char id[ABS_ID_MAX * 3], encoded[ABS_NAME_MAX * 3], path[1200];
+	http_url_encode(library_id, id, sizeof(id));
+	http_url_encode(query, encoded, sizeof(encoded));
+	snprintf(path, sizeof(path), "/api/libraries/%s/search?q=%s&limit=%d", id, encoded, max);
+	char *body = NULL;
+	if (!api_request(path, NULL, &body, NULL, NULL)) { free(body); return -1; }
+	json_doc_t doc;
+	if (!json_parse(body, &doc)) {
+		free(body);
+		set_error("Audiobookshelf returned invalid search data.");
+		return -1;
+	}
+	int results = json_get(&doc, json_root(&doc), "book");
+	int count = json_len(&doc, results), written = 0;
+	for (int i = 0; i < count && written < max; i++) {
+		audiobookshelf_item_t item;
+		read_item(&doc, json_get(&doc, json_at(&doc, results, i), "libraryItem"), &item);
+		if (item.id[0]) out[written++] = item;
+	}
+	json_free(&doc);
+	free(body);
+	return written;
 }
 
 bool audiobookshelf_book(const char *item_id, audiobookshelf_book_t *out) {

@@ -35,6 +35,18 @@ The fork adds and hardens the parts that matter most when the R1 is used as an a
 | --- | --- |
 | <img src="docs/screenshots/audiobook-now-playing.png" width="240" alt="Audiobook Now Playing screen showing artwork, title, author, progress, and skip controls"> | <img src="docs/screenshots/audiobookshelf-sync.png" width="240" alt="Centered Audiobookshelf status showing waiting for Wi-Fi while the local audiobook is paused"> |
 
+### Audiobookshelf browsing on the R1
+
+| Server library | Authors |
+| --- | --- |
+| <img src="docs/screenshots/audiobookshelf-library.png" width="240" alt="Audiobookshelf library with Search, Authors and Series controls"> | <img src="docs/screenshots/audiobookshelf-authors.png" width="240" alt="Alphabetical Audiobookshelf author list"> |
+
+| Series | Search results |
+| --- | --- |
+| <img src="docs/screenshots/audiobookshelf-series.png" width="240" alt="Alphabetical Audiobookshelf series list"> | <img src="docs/screenshots/audiobookshelf-search.png" width="240" alt="Server search results and All books reset button"> |
+
+These are captures from a physical R1. Author and series names come from the server's metadata; different spellings remain separate entries.
+
 ## Install
 
 1. Download `r1.upt` from the [latest release](https://github.com/yetisoldier/sonix-audiobooks/releases/latest).
@@ -90,6 +102,14 @@ Open **Streaming > Audiobookshelf** and enter your server URL and an API token f
 
 Listen with Wi-Fi off normally. When you turn Wi-Fi on, linked books reconcile their progress automatically. The Now Playing label shows whether a book is local-only, waiting for Wi-Fi, syncing, or synced. Sync never enables Wi-Fi itself.
 
+Inside a server library, **Search** opens the on-screen keyboard and searches
+the whole Audiobookshelf library. Up to 40 matching books are displayed; a
+notice asks you to refine broad searches. **Authors** and **Series** open
+alphabetical lists with 40 entries per page. Select an entry to browse its
+books, with series sorted by book number. Back returns from books to the
+author/series list; **All books** clears the filter. Requests run in the
+background so the interface stays responsive.
+
 The newest listening timestamp wins, including a newer intentional rewind. If timestamps are missing, unreliable or tied, the farther position through the whole book wins. Incoming server progress does not interrupt active playback; a paused book uses the imported file/position on its next Play. That paused screen can still show the old position until you press Play.
 
 See [Audiobookshelf setup, sync rules and limitations](docs/AUDIOBOOKSHELF_SYNC.md). Manual bookmarks do not sync, and simultaneous listening on two devices can still race because the server API does not provide atomic conditional updates.
@@ -104,7 +124,7 @@ If an update fails or you want the stock interface back, reinstall the official 
 
 ## Project status
 
-The latest public release is **Sonix Audiobooks 0.2.0**, an early community-feedback release for the original HiBy R1. It includes the optional Audiobookshelf integration and selective upstream fixes listed in [CHANGELOG.md](CHANGELOG.md). It has passed host/simulator tests and short checks on one physical R1, but is not a claim of exhaustive compatibility or long-duration stability across every library and output device.
+The latest public release is **Sonix Audiobooks 0.3.0**, an early community-feedback release for the original HiBy R1. It adds search, author browsing and series browsing inside Streaming > Audiobookshelf, alongside the optional sync integration and selective upstream fixes listed in [CHANGELOG.md](CHANGELOG.md). It has passed host/simulator tests and short checks on one physical R1, but is not a claim of exhaustive compatibility or long-duration stability across every library and output device.
 
 Known areas that benefit from community testing include very large libraries, unusual metadata, USB-C audio devices, Bluetooth hardware, and long unattended playback.
 

@@ -2,6 +2,19 @@
 
 All entries here are specific to Sonix Audiobooks. The project also inherits ongoing work from [Sonix Player](https://github.com/Jepl4r/sonix-player); upstream changes are not repeated line-by-line here.
 
+## Sonix Audiobooks 0.3.0 - 2026-10-01
+
+Public feedback release for the original HiBy R1. Firmware build identifier: `011020261530`.
+
+- Added **Search**, **Authors**, and **Series** directly inside each Streaming > Audiobookshelf library.
+- Search uses the server's whole-library search, with an on-screen keyboard and up to 40 matching books. Broad searches prompt you to refine the query.
+- Authors and series are alphabetically listed with 40-entry pages. Selecting a series requests books in series sequence; selecting an author lists their books by title.
+- Back returns from filtered books to the author/series list. **All books** clears the active search or filter.
+- Network requests run in the background rather than blocking the interface.
+- Expanded the mock-server smoke test to verify search submission, encoded author/series filters, sequence sorting requests and back navigation, alongside download, multipart resume and progress upload.
+- Verified the installed executable on a physical R1, then checked author browsing, series order and keyboard search against a live server. This is not a long-duration playback or battery test.
+- Updated the usage guide and added physical-device screenshots of the new browsing views.
+
 ## Sonix Audiobooks 0.2.0 - 2026-10-01
 
 Public feedback release for the original HiBy R1. Includes the changes below since 0.1.0. Firmware build identifier: `011020261348`.

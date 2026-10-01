@@ -4,6 +4,22 @@ Available in Sonix Audiobooks 0.2.0 and later. Not included in 0.1.0.
 
 The R1 remains a standalone player. Download or link a book once, turn Wi-Fi off, and listen locally. A server connection is not required for playback, chapters, bookmarks or resume. When you choose to turn Wi-Fi on again, saved progress is reconciled automatically with Audiobookshelf. Sync never enables Wi-Fi itself and does not automatically download new books.
 
+## Find a book on the server
+
+Starting with **0.3.0**, open **Streaming > Audiobookshelf**, choose your server library, then use the toolbar:
+
+- **Search** opens the keyboard. Enter a query and tap the magnifying-glass key to submit. This searches the whole server library, not just the visible page. Matching follows the server's search behavior, so results can match metadata beyond the title. At most 40 books are shown; refine the query if the limit notice appears.
+- **Authors** opens an alphabetical author list. Select an author to see their books by title.
+- **Series** opens an alphabetical series list. Select a series to see its books in series sequence.
+- Group lists and ordinary/filtered book lists have 40-entry pages. Use the page controls to continue browsing.
+- **Back** returns from an author's or series' books to that group list. **All books** clears a search or filter; submitting an empty search also returns to all books.
+
+Wi-Fi and a reachable configured server are required for this browser. It does not change the local Audiobooks views, and finding a book does not automatically download it. Author spelling, series membership and sequence come from your server's metadata; this interface does not merge duplicate author spellings.
+
+| Library controls | Search results |
+| --- | --- |
+| <img src="screenshots/audiobookshelf-library.png" width="240" alt="R1 server library toolbar"> | <img src="screenshots/audiobookshelf-search.png" width="240" alt="R1 search results for hope"> |
+
 ## Which books sync?
 
 Books downloaded through Streaming > Audiobookshelf are linked. An existing SD-card copy must first be linked through that server library; a matching title alone does not enable sync. Local-only books continue to remember their position on the R1 without sending it anywhere.

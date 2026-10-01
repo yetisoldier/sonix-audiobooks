@@ -6,7 +6,7 @@ import json
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -37,6 +37,21 @@ class Handler(BaseHTTPRequestHandler):
         if not self.authorized():
             return
         path = urlparse(self.path).path
+        with self.progress_file.with_suffix(".requests").open("a") as log:
+            log.write(self.path + "\n")
+        if path == "/api/libraries/mock-library/filterdata":
+            self.send_json({"authors": [{"id": "author-1", "name": "Test Author"}],
+                            "series": [{"id": "series-1", "name": "Fixture Series"}]})
+            return
+        if path == "/api/libraries/mock-library/search":
+            query = parse_qs(urlparse(self.path).query).get("q", [""])[0]
+            matches = []
+            if query.lower() in "the mock journey":
+                matches = [{"libraryItem": {"id": "mock-book", "media": {
+                    "duration": 20, "metadata": {"title": "The Mock Journey", "authorName": "Test Author"}
+                }}}]
+            self.send_json({"book": matches})
+            return
         if path == "/api/me/progress/mock-book":
             if self.progress_file.with_suffix(".offline").exists():
                 self.send_json({"error": "offline test"}, 503)

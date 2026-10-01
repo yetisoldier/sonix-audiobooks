@@ -40,8 +40,12 @@ static lv_obj_t *server_field;
 static lv_obj_t *token_field;
 static lv_obj_t *token_eye_icon;
 static keyboard_t *setup_keyboard;
+static lv_obj_t *search_screen, *search_field;
+static keyboard_t *search_keyboard;
+static char search_query[ABS_NAME_MAX];
+static bool returning_from_search;
 
-typedef enum { VIEW_LIBRARIES = 0, VIEW_ITEMS } view_t;
+typedef enum { VIEW_LIBRARIES = 0, VIEW_ITEMS, VIEW_GROUPS } view_t;
 static view_t view;
 static char library_id[ABS_ID_MAX];
 static char library_name[ABS_NAME_MAX];
@@ -52,12 +56,19 @@ static int library_count;
 static audiobookshelf_item_t items[ABS_PAGE_LIMIT];
 static int item_count;
 static int item_total;
+static audiobookshelf_library_t *groups;
+static int group_count, group_page;
+static bool group_series;
+static char item_filter[200], group_name[ABS_NAME_MAX];
+static void draw_groups(void);
 
-typedef enum { JOB_NONE = 0, JOB_TEST, JOB_LIBRARIES, JOB_ITEMS, JOB_DOWNLOAD, JOB_LINK } job_kind_t;
+typedef enum { JOB_NONE = 0, JOB_TEST, JOB_LIBRARIES, JOB_ITEMS, JOB_SEARCH, JOB_GROUPS, JOB_DOWNLOAD, JOB_LINK } job_kind_t;
 typedef struct {
 	job_kind_t kind;
 	char id[ABS_ID_MAX];
 	char path[1280];
+	char query[ABS_NAME_MAX];
+	char filter[200];
 	int page;
 } job_t;
 
@@ -146,6 +157,8 @@ static void library_clicked_cb(lv_event_t *e) {
 	snprintf(library_id, sizeof(library_id), "%s", libraries[index].id);
 	snprintf(library_name, sizeof(library_name), "%s", libraries[index].name);
 	item_page = 0;
+	search_query[0] = '\0';
+	item_filter[0] = group_name[0] = '\0';
 	job_t job = {.kind = JOB_ITEMS, .page = 0};
 	snprintf(job.id, sizeof(job.id), "%s", library_id);
 	run_loading(&job);
@@ -327,6 +340,7 @@ static void page_nav_cb(lv_event_t *e) {
 	if (page < 0 || busy) return;
 	job_t job = {.kind = JOB_ITEMS, .page = page};
 	snprintf(job.id, sizeof(job.id), "%s", library_id);
+	snprintf(job.filter, sizeof(job.filter), "%s", item_filter);
 	run_loading(&job);
 }
 
@@ -404,10 +418,110 @@ static void add_item_row(int index) {
 	lv_obj_add_flag(subtitle, LV_OBJ_FLAG_EVENT_BUBBLE);
 }
 
+static void open_search_cb(lv_event_t *e) {
+	(void)e;
+	if (busy) return;
+	lv_textarea_set_text(search_field, search_query);
+	keyboard_reset(search_keyboard);
+	returning_from_search = true;
+	switch_screen(search_screen);
+}
+
+static void search_accept_cb(lv_event_t *e) {
+	(void)e;
+	if (busy) return;
+	job_t job = {.kind = JOB_SEARCH};
+	snprintf(job.id, sizeof(job.id), "%s", library_id);
+	snprintf(job.query, sizeof(job.query), "%s", lv_textarea_get_text(search_field));
+	char *start = job.query;
+	while (isspace((unsigned char)*start)) start++;
+	memmove(job.query, start, strlen(start) + 1);
+	size_t len = strlen(job.query);
+	while (len && isspace((unsigned char)job.query[len - 1])) job.query[--len] = '\0';
+	if (!len) job.kind = JOB_ITEMS;
+	back_btn_cb(NULL);
+	run_loading(&job);
+}
+
+static void clear_search_cb(lv_event_t *e) {
+	(void)e;
+	if (busy) return;
+	job_t job = {.kind = JOB_ITEMS};
+	snprintf(job.id, sizeof(job.id), "%s", library_id);
+	run_loading(&job);
+}
+
+static void browse_groups_cb(lv_event_t *e) {
+	if (busy) return;
+	job_t job = {.kind = JOB_GROUPS, .page = (int)(intptr_t)lv_event_get_user_data(e)};
+	snprintf(job.id, sizeof(job.id), "%s", library_id);
+	run_loading(&job);
+}
+
+static void group_clicked_cb(lv_event_t *e) {
+	int i = (int)(intptr_t)lv_event_get_user_data(e);
+	if (busy || i < 0 || i >= group_count) return;
+	job_t job = {.kind = JOB_ITEMS};
+	snprintf(job.id, sizeof(job.id), "%s", library_id);
+	snprintf(job.query, sizeof(job.query), "%s", groups[i].name);
+	audiobookshelf_group_filter(group_series, groups[i].id, job.filter, sizeof(job.filter));
+	run_loading(&job);
+}
+
+static void group_page_cb(lv_event_t *e) {
+	if (busy) return;
+	group_page = (int)(intptr_t)lv_event_get_user_data(e);
+	draw_groups();
+}
+
+static void draw_groups(void) {
+	view = VIEW_GROUPS;
+	lv_obj_clean(content);
+	lv_label_set_text(page_title, group_series ? "Series" : "Authors");
+	if (group_page) settingsrow_action(content, "audiobookshelf_previous_page", group_page_cb,
+		(void *)(intptr_t)(group_page - 1));
+	for (int i = group_page * ABS_PAGE_LIMIT; i < group_count && i < (group_page + 1) * ABS_PAGE_LIMIT; i++)
+		settingsrow_add(content, groups[i].name, NULL, group_clicked_cb, (void *)(intptr_t)i);
+	if (!group_count) show_note("No matching authors or series.");
+	if ((group_page + 1) * ABS_PAGE_LIMIT < group_count)
+		settingsrow_action(content, "audiobookshelf_next_page", group_page_cb, (void *)(intptr_t)(group_page + 1));
+}
+
 static void draw_items(void) {
 	view = VIEW_ITEMS;
 	lv_label_set_text(page_title, library_name[0] ? library_name : tr("audiobookshelf"));
 	lv_obj_clean(content);
+	lv_obj_t *toolbar = lv_obj_create(content);
+	lv_obj_set_size(toolbar, lv_pct(100), 64);
+	lv_obj_set_style_pad_all(toolbar, 0, 0);
+	lv_obj_set_style_border_width(toolbar, 0, 0);
+	lv_obj_set_style_bg_opa(toolbar, LV_OPA_TRANSP, 0);
+	lv_obj_set_flex_flow(toolbar, LV_FLEX_FLOW_ROW);
+	lv_obj_remove_flag(toolbar, LV_OBJ_FLAG_SCROLLABLE);
+	const char *labels[] = {"search", "Authors", "Series"};
+	for (int i = 0; i < 3; i++) {
+		lv_obj_t *button = lv_btn_create(toolbar);
+		lv_obj_set_height(button, 60);
+		lv_obj_set_flex_grow(button, 1);
+		lv_obj_add_style(button, &theme_style_card, 0);
+		lv_obj_add_style(button, &theme_style_card_pressed, LV_STATE_PRESSED);
+		lv_obj_add_event_cb(button, i == 0 ? open_search_cb : browse_groups_cb,
+			LV_EVENT_CLICKED, (void *)(intptr_t)(i == 2));
+		lv_obj_t *label = lv_label_create(button);
+		lv_label_set_text(label, tr(labels[i]));
+		lv_obj_add_style(label, &theme_style_text, 0);
+		lv_obj_set_style_text_font(label, &font_ui_18, 0);
+		lv_obj_center(label);
+	}
+	if (item_filter[0]) {
+		show_note(group_name);
+		settingsrow_action(content, "All books", clear_search_cb, NULL);
+	}
+	if (search_query[0]) {
+		show_note(search_query);
+		settingsrow_action(content, "All books", clear_search_cb, NULL);
+		if (item_count == ABS_PAGE_LIMIT) show_note("First 40 matches. Refine your search to find more.");
+	}
 	if (item_page > 0) settingsrow_action(content, "audiobookshelf_previous_page", page_nav_cb,
 										 (void *)(intptr_t)(item_page - 1));
 	for (int i = 0; i < item_count; i++) add_item_row(i);
@@ -467,6 +581,11 @@ static void start_resume_import(bool scan_first) {
 }
 
 static bool back_guard(void) {
+	if (busy) return true;
+	if (view == VIEW_GROUPS) { clear_search_cb(NULL); return true; }
+	if (view == VIEW_ITEMS && item_filter[0]) {
+		draw_groups(); return true;
+	}
 	if (view != VIEW_ITEMS) return false;
 	draw_libraries();
 	return true;
@@ -513,7 +632,11 @@ static void job_done_async(void *user) {
 		draw_libraries();
 		break;
 	case JOB_ITEMS:
+	case JOB_SEARCH:
 		draw_items();
+		break;
+	case JOB_GROUPS:
+		draw_groups();
 		break;
 	case JOB_DOWNLOAD: {
 		start_resume_import(true);
@@ -549,11 +672,30 @@ static void *worker_main(void *user) {
 				result_ok = true;
 			}
 		} else if (job.kind == JOB_ITEMS) {
-			int count = audiobookshelf_items(job.id, job.page, items, ABS_PAGE_LIMIT, &item_total);
+			int count = audiobookshelf_filtered_items(job.id, job.page, job.filter, items, ABS_PAGE_LIMIT, &item_total);
 			if (count >= 0) {
 				item_count = count;
 				item_page = job.page;
+				search_query[0] = '\0';
+				snprintf(item_filter, sizeof(item_filter), "%s", job.filter);
+				if (job.query[0]) snprintf(group_name, sizeof(group_name), "%s", job.query);
 				result_ok = true;
+			}
+		} else if (job.kind == JOB_SEARCH) {
+			int count = audiobookshelf_search(job.id, job.query, items, ABS_PAGE_LIMIT);
+			if (count >= 0) {
+				item_count = item_total = count;
+				item_page = 0;
+				item_filter[0] = '\0';
+				snprintf(search_query, sizeof(search_query), "%s", job.query);
+				result_ok = true;
+			}
+		} else if (job.kind == JOB_GROUPS) {
+			audiobookshelf_library_t *next = NULL;
+			int count = audiobookshelf_groups(job.id, job.page != 0, &next);
+			if (count >= 0) {
+				free(groups); groups = next; group_count = count; group_page = 0;
+				group_series = job.page != 0; result_ok = true;
 			}
 		} else if (job.kind == JOB_DOWNLOAD || job.kind == JOB_LINK) {
 			audiobookshelf_book_t *book = calloc(1, sizeof(*book));
@@ -612,6 +754,7 @@ static void start_worker(void) {
 
 static void page_loaded_cb(lv_event_t *e) {
 	(void)e;
+	if (returning_from_search) { returning_from_search = false; return; }
 	if (!audiobookshelf_configured() || !wifi_connected()) {
 		draw_libraries();
 		return;
@@ -727,6 +870,16 @@ void audiobookshelfpage_init(gui_config_t *cfg) {
 	content = settingsrow_page(audiobookshelf_screen, cfg, "audiobookshelf");
 	page_title = settingsrow_page_title(audiobookshelf_screen);
 	build_setup();
+	search_screen = lv_obj_create(NULL);
+	lv_obj_add_style(search_screen, &theme_style_screen, 0);
+	settingsrow_title(search_screen, config, "search");
+	search_field = make_field(search_screen, "Search library", settingsrow_content_top(config));
+	lv_obj_remove_event_cb(search_field, field_focus_cb);
+	lv_textarea_set_max_length(search_field, ABS_NAME_MAX - 1);
+	lv_obj_add_state(search_field, LV_STATE_FOCUSED);
+	search_keyboard = keyboard_create(search_screen, config->screen_width, 316, search_field,
+		&icon_search, NULL, search_accept_cb, NULL);
+	switcher_attach_back_gesture(search_screen);
 	start_worker();
 	draw_libraries();
 	lv_obj_add_event_cb(audiobookshelf_screen, page_loaded_cb, LV_EVENT_SCREEN_LOADED, NULL);

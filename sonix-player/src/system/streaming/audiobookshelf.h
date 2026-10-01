@@ -58,6 +58,13 @@ void audiobookshelf_clear_credentials(void);
 // All network calls block and belong on a worker thread.
 int audiobookshelf_libraries(audiobookshelf_library_t *out, int max);
 int audiobookshelf_items(const char *library_id, int page, audiobookshelf_item_t *out, int max, int *total_out);
+// Server-wide search; returns at most max matches (no server search pagination).
+int audiobookshelf_search(const char *library_id, const char *query, audiobookshelf_item_t *out, int max);
+// Caller owns the allocated, alphabetically sorted filter list.
+int audiobookshelf_groups(const char *library_id, bool series, audiobookshelf_library_t **out);
+int audiobookshelf_filtered_items(const char *library_id, int page, const char *filter,
+	 audiobookshelf_item_t *out, int max, int *total_out);
+void audiobookshelf_group_filter(bool series, const char *id, char *out, size_t size);
 bool audiobookshelf_book(const char *item_id, audiobookshelf_book_t *out);
 
 // Downloads one complete book into
