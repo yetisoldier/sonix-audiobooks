@@ -1,6 +1,6 @@
-# Sonix Player Audiobook Edition
+# Sonix Audiobooks: Project Notes
 
-This fork is an audiobook-focused development track for the HiBy R1. It is
+Sonix Audiobooks is an audiobook-focused development track for the HiBy R1. It is
 based on [Jepl4r/sonix-player](https://github.com/Jepl4r/sonix-player) and stays
 close enough to upstream to continue receiving its player, hardware, and
 format improvements.
@@ -100,9 +100,11 @@ original project history and attribution.
 
 ## Release status
 
-Audiobook Edition 0.1.0 is a public preview for the original HiBy R1. Target
+Sonix Audiobooks `0.1.0` is a public preview for the original HiBy R1. Target
 and host builds, ABI checks, catalog integrity, single- and multipart resume,
 manual bookmarks, automatic part advance, live UI control, clean boot, and
-normal plus delayed touch-probe scenarios have passed. Long-duration playback,
-very large personal libraries, and the broad range of USB/Bluetooth hardware
-still benefit from community testing.
+normal plus delayed touch-probe scenarios have passed. The active development
+branch additionally contains optional Audiobookshelf sync work; see the
+[changelog](CHANGELOG.md) for its exact status. Long-duration playback, very
+large personal libraries, and the broad range of USB/Bluetooth hardware still
+benefit from community testing.
