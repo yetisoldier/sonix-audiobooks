@@ -45,6 +45,15 @@ def check(probe, path, flag, shown, series="", part="", summary=""):
     assert actual == expected, (path.name, actual, expected)
 
 
+def encoder(name, fallback, extra):
+    """The fixture encoder, by whatever name this host's ffmpeg knows it.
+    The native `vorbis` fallback is experimental and stereo-only; libvorbis
+    needs neither flag."""
+    listing = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"],
+                             text=True, capture_output=True, check=True).stdout
+    return (name, []) if f" {name} " in listing else (fallback, extra)
+
+
 def main():
     probe = str(pathlib.Path(sys.argv[1]).resolve())
     count = 0
@@ -57,19 +66,24 @@ def main():
                 for custom in (False, True):
                     if version == 2 and custom:
                         continue
+                    # Regenerated against upstream 1.3.0's flag_is_set(), which
+                    # accepts "1" by first character and the prefixes "true"/"yes"
+                    # (REBASE_PLAN.md §3: regenerate the goldens; the 0.x line's
+                    # exact-match expectations were not carried over).
                     for flag, enabled in (("1", True), ("true", True), (" YES ", True),
                                           ("0", False), ("false", False), ("", False),
-                                          ("10", False), ("yesterday", False)):
+                                          ("10", True), ("yesterday", True)):
                         path = root / f"id3-{version}-{encoding}-{custom}-{count}.mp3"
                         id3(path, flag, encoding, custom, version)
                         check(probe, path, enabled, "Narrator" if enabled else "Author")
                         count += 1
-        for suffix, codec in (("flac", "flac"), ("ogg", "libvorbis"),
-                              ("opus", "libopus"), ("wv", "wavpack"), ("m4a", "aac")):
+        vorbis_codec, vorbis_extra = encoder("libvorbis", "vorbis", ["-ac", "2", "-strict", "experimental"])
+        for suffix, codec, extra in (("flac", "flac", []), ("ogg", vorbis_codec, vorbis_extra),
+                              ("opus", "libopus", []), ("wv", "wavpack", []), ("m4a", "aac", [])):
             for flag in ("0", "1"):
                 path = root / f"compilation-{flag}.{suffix}"
                 subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
-                                "sine=duration=0.15", "-c:a", codec,
+                                "sine=duration=0.15", *extra, "-c:a", codec,
                                 "-metadata", "artist=Narrator", "-metadata", "album_artist=Author",
                                 "-metadata", f"compilation={flag}", str(path)], check=True)
                 check(probe, path, flag == "1", "Narrator" if flag == "1" else "Author")

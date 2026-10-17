@@ -69,8 +69,8 @@ checkpoint_ready() {
 }
 
 details_ready() {
-	[[ $(sqlite3 "$DB" "SELECT COUNT(*) FROM AUDIOBOOK_TABLE WHERE name='Book One' AND summary='A host-test description & details.' AND location LIKE '%/Test Author/Series One/Book One';" 2>/dev/null) == 1 ]] &&
-		[[ $(sqlite3 "$DB" "SELECT COUNT(*) FROM AUDIOBOOK_TABLE WHERE name='Standalone Book' AND summary='A host-test summary for the standalone M4B.' AND location LIKE '%/Standalone Author/Standalone Book';" 2>/dev/null) == 1 ]]
+	[[ $(sqlite3 "$DB" "SELECT COUNT(*) FROM AUDIOBOOK_TABLE WHERE name='Book One' AND summary='A host-test description & details.' AND path LIKE '%/Test Author/Series One/Book One';" 2>/dev/null) == 1 ]] &&
+		[[ $(sqlite3 "$DB" "SELECT COUNT(*) FROM AUDIOBOOK_TABLE WHERE name='Standalone Book' AND summary='A host-test summary for the standalone M4B.' AND path LIKE '%/Standalone Author/Standalone Book/%';" 2>/dev/null) == 1 ]]
 }
 
 bookmark_ready() {
@@ -207,16 +207,13 @@ screenshot catalog
 
 click 240 735       # scan result -> OK
 screenshot audiobook-home
-click 125 650       # Audiobooks -> Bookmarks
+# Upstream 1.3.0 has no Folders tile and no Bookmarks tile on this page:
+# the finished books and the bookmarks are corner buttons beside the options,
+# and browsing the folders themselves is the music Browse page's job.
+click 313 87        # Audiobooks -> Bookmarks (corner button, slot 2)
 screenshot bookmarks-empty
 click 43 88         # back to Audiobooks
-click 355 650       # Audiobooks -> Folders
-screenshot folders-root
-click 240 170       # first author folder
-screenshot folders-author
-click 43 88         # folder guard -> folder root
-click 43 88         # back to Audiobooks
-click 125 245       # Audiobooks -> Library
+click 125 232       # Audiobooks -> Library
 click 240 180       # Book One
 wait_for "multipart playback" 100 grep -q "01 - Part One.mp3" "$WORK/first-run.log"
 screenshot player
@@ -225,6 +222,11 @@ click 438 730       # audiobook tools menu
 screenshot book-menu
 click 300 523       # Add bookmark
 wait_for "a saved manual bookmark" 50 bookmark_ready
+# The bookmark's saved position is this run's expected seek target. Capture
+# it from the run's own database so the assertions below follow whatever
+# moment the tap landed at, instead of a hardcoded position.
+SAVED_BOOKMARK_POS=$(sqlite3 "$DB" "SELECT pos FROM AUDIOBOOK_BOOKMARKS LIMIT 1;" 2>/dev/null)
+[[ -n "$SAVED_BOOKMARK_POS" ]] || fail "the saved bookmark has no position to assert against"
 sleep 2             # let the confirmation toast leave before the next tap
 click 438 730       # audiobook tools menu
 sleep 1
@@ -239,8 +241,27 @@ sleep 1
 click 300 586       # Bookmarks for this book
 screenshot bookmark-list
 click 240 175       # resume from the saved bookmark
-wait_for "exact manual-bookmark resume" 50 grep -Eq \
-	"play requested '.*01 - Part One\\.mp3' from [1-9][0-9]*(\\.[0-9]+)? s" "$WORK/first-run.log"
+# Upstream 1.3.0 seeks in place when the marked book is the one loaded
+# (device_state_seek + a forced checkpoint), rather than re-requesting the
+# file, so the proof is the seek and the checkpoint it writes. The log
+# prints the target to two decimals, so compare it with the saved position
+# numerically, with half a hundredth of slack for that rounding.
+bookmark_seek_logged() {
+	grep -oE 'seeking to [0-9]+\.[0-9]{2} seconds' "$WORK/first-run.log" | awk -v want="$SAVED_BOOKMARK_POS" \
+		'{ if ($3 >= want - 0.0051 && $3 <= want + 0.0051) found = 1 } END { exit !found }'
+}
+wait_for "exact manual-bookmark resume" 50 bookmark_seek_logged
+bookmark_resumed() {
+	local file seconds
+	file=$(sqlite3 "$DB" "SELECT resume_file FROM AUDIOBOOK_TABLE WHERE name='Book One';" 2>/dev/null)
+	seconds=$(sqlite3 "$DB" "SELECT resume_pos FROM AUDIOBOOK_TABLE WHERE name='Book One';" 2>/dev/null)
+	# The seek forces a checkpoint at the bookmark position. Playback that
+	# runs while this poll waits for the writer can move it forward a
+	# little, but never below or far past the bookmark.
+	[[ "$file" == *"01 - Part One.mp3" ]] && awk -v lower="$SAVED_BOOKMARK_POS" -v value="$seconds" \
+		'BEGIN { exit !(value >= lower - 0.05 && value <= lower + 3.0) }'
+}
+wait_for "bookmark checkpoint written" 50 bookmark_resumed
 sleep 12
 xdotool key --window "$WINDOW" n
 

@@ -175,8 +175,8 @@ if [[ "$EXISTING" == 1 ]]; then
 	wait_for "existing local catalog" 100 local_catalog_ready
 fi
 
-click 355 245 1       # Home -> Streaming
-click 175 700 2       # Streaming -> Audiobookshelf
+click 356 160 1       # Home -> Streaming (upstream 1.3.0 home layout)
+click 124 704 2       # Streaming -> Audiobookshelf (fifth tile, bottom left)
 click 280 305 2       # library
 click 240 180 2       # Authors toolbar
 scrot "$WORK/authors.png"
@@ -238,8 +238,8 @@ sleep 2                # let the success toast release the back button
 click 43 88 2          # titles -> libraries
 click 43 88 2          # Audiobookshelf -> Streaming
 click 43 88 2          # Streaming -> Home
-click 355 420 1        # Home -> Audiobooks
-click 125 245 1        # Audiobooks -> Library
+click 356 406 1        # Home -> Audiobooks (upstream 1.3.0 home layout)
+click 125 232 1        # Audiobooks -> Library
 click 240 180 2        # resume the downloaded book
 scrot "$WORK/local-playback.png"
 wait_for "playback from imported part" 100 grep -q "play requested.*002 - Part Two.mp3.*from 3" "$WORK/player.log"

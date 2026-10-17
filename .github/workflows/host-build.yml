@@ -1,0 +1,61 @@
+name: Host build
+
+on:
+  push:
+    branches: [main, rebase/**]
+  pull_request:
+
+concurrency:
+  group: host-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: sonix-player
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential git pkg-config libsdl2-dev libfreetype-dev \
+            libopusfile-dev libwavpack-dev libasound2-dev \
+            ffmpeg sqlite3 xvfb xdotool scrot
+      - name: Compile the host simulator
+        # The Makefile target is `host`; it builds sonix_player_host and clones
+        # LVGL 9.6.0 on first use.
+        run: make host -j2
+      - name: Exercise audiobook catalog and resume
+        working-directory: ..
+        env:
+          SONIX_SMOKE_SKIP_BUILD: 1
+        run: tools/audiobook-host-smoke.sh
+      - name: Exercise the Audiobookshelf flow against the mock server
+        working-directory: ..
+        env:
+          SONIX_SMOKE_SKIP_BUILD: 1
+        run: tools/audiobookshelf-host-smoke.sh
+      - name: Run the outbox and decision unit tests
+        working-directory: ..
+        run: bash tools/audiobookshelf-outbox-test.sh
+      - name: Upload audiobook smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: audiobook-host-smoke
+          path: build/audiobook-host-smoke
+          if-no-files-found: ignore
+      - name: Upload Audiobookshelf smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: audiobookshelf-host-smoke
+          path: build/audiobookshelf-host-smoke
+          if-no-files-found: ignore
