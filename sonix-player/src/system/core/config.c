@@ -27,7 +27,11 @@
 
 #define CONFIG_SECTION_LEN 32
 #define CONFIG_KEY_LEN 32
-#define CONFIG_VALUE_LEN 128
+// Most settings are short, but service API keys commonly exceed 128 bytes
+// (Audiobookshelf JWT keys are typically a little over 200). Keeping the
+// fixed table at 256 supports those without introducing heap ownership into
+// the configuration layer; across the main table this costs 48 KiB.
+#define CONFIG_VALUE_LEN 256
 
 typedef struct {
 	char section[CONFIG_SECTION_LEN];

@@ -44,6 +44,7 @@
 #include "src/system/library/lyrics.h"
 #include "src/system/device/led.h"
 #include "src/system/playback/playlist.h"
+#include "src/system/streaming/audiobookshelf.h"
 #include "src/system/streaming/podcast.h"
 #include "src/system/streaming/podcastcache.h"
 #include "src/system/streaming/podcastsubs.h"
@@ -218,6 +219,7 @@ static lv_obj_t *live_badge;	   // live indicator, top right over the artwork
 static lv_obj_t *qobuz_badge;	   // the Qobuz mark, in the same corner
 static lv_obj_t *tidal_badge;	   // and the Tidal one, over it: only one ever shows
 static lv_obj_t *podcast_badge;	   // and the podcast one, third in the same place
+static lv_obj_t *abs_sync_label;   // the Audiobookshelf status, centred above the artwork
 static bool live_mode;
 static bool live_transport_hidden; // prev/next taken away on a stream
 static bool live_custom_nav;	   // on a station from a list, where they change station
@@ -4136,6 +4138,24 @@ static void track_end_hook(void) { gui_post(track_end_async, NULL); }
 // Reads the current device state and reconciles the UI against it. This is the
 // single point that keeps the play/pause button and the progress bar from
 // going stale once a track finishes on its own.
+static void update_abs_sync(const device_state_t *state) {
+	if (!abs_sync_label) return;
+	if (state->live || !audiobook_mode || !state->current_file[0]) {
+		(void)audiobookshelf_sync_status(NULL);
+		lv_obj_set_hidden(abs_sync_label, true);
+		return;
+	}
+	audiobookshelf_sync_status_t status = audiobookshelf_sync_status(state->current_file);
+	static const char *keys[] = {
+		"abs_sync_checking", "abs_sync_local", "abs_sync_setup", "abs_sync_linked",
+		"abs_sync_pending", "abs_sync_offline", "abs_sync_sending", "abs_sync_synced",
+		"abs_sync_retry", "abs_sync_other_server", "abs_sync_synced_offline"
+	};
+	const char *value = tr(keys[status]);
+	if (strcmp(lv_label_get_text(abs_sync_label), value) != 0) lv_label_set_text(abs_sync_label, value);
+	lv_obj_set_hidden(abs_sync_label, false);
+}
+
 static void update_progress(void) {
 	// Auto-advance or loop the folder when the track has played through.
 	if (device_state_take_completion()) {
@@ -4209,6 +4229,7 @@ static void update_progress(void) {
 	apply_audiobook_mode(!state.live && audiobook_is_playing(),
 						 !state.live && podcastcache_is_episode(state.current_file));
 	update_format_label(&state); // the rate/bits settle shortly after the start
+	update_abs_sync(&state);
 
 	// The status LED follows playback promptly from here (the battery poll
 	// only comes round once a minute). Only writes when the colour changes.
@@ -5670,6 +5691,23 @@ void player_init(gui_config_t *cfg) {
 	studio_quality_icon = lv_image_create(studio_quality);
 
 	lyrics_build();
+
+	// The Audiobookshelf status, centred above the artwork: a compact line
+	// on a shaded background, hidden for music and unlinked books alike.
+	abs_sync_label = lv_label_create(player_screen);
+	lv_obj_set_size(abs_sync_label, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+	lv_obj_set_style_max_width(abs_sync_label, cfg->screen_width - 192, 0);
+	lv_obj_align(abs_sync_label, LV_ALIGN_TOP_MID, 0, 12);
+	lv_label_set_long_mode(abs_sync_label, LV_LABEL_LONG_WRAP);
+	lv_obj_set_style_text_font(abs_sync_label, &font_ui_18, 0);
+	lv_obj_set_style_text_align(abs_sync_label, LV_TEXT_ALIGN_CENTER, 0);
+	lv_obj_set_style_text_color(abs_sync_label, lv_color_white(), 0);
+	lv_obj_set_style_bg_color(abs_sync_label, lv_color_black(), 0);
+	lv_obj_set_style_bg_opa(abs_sync_label, LV_OPA_60, 0);
+	lv_obj_set_style_pad_all(abs_sync_label, 5, 0);
+	lv_obj_set_clickable(abs_sync_label, false);
+	lv_obj_set_hidden(abs_sync_label, true);
+	lv_label_set_text(abs_sync_label, "");
 
 	// Last, so it is above the artwork: an invisible strip exactly where the
 	// status bar would be, owning the pull-down that opens the control centre.

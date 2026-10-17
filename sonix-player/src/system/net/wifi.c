@@ -1,4 +1,5 @@
 #include "wifi.h"
+#include "src/system/streaming/audiobookshelf.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -1388,6 +1389,7 @@ void wifi_init(void) {
 	} else if (g_enabled) {
 		g_enabled = false; // no interface, so the switch must not read as on
 	}
+	audiobookshelf_network_changed();
 }
 
 bool wifi_get_enabled(void) {
@@ -1424,6 +1426,7 @@ static void set_enabled(bool on, bool remember) {
 
 	job_t job = {.type = JOB_POWER, .arg_int = on ? 1 : 0};
 	post_job(&job);
+	audiobookshelf_network_changed();
 }
 
 void wifi_set_enabled(bool on) { set_enabled(on, true); }

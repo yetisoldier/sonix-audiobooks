@@ -9,6 +9,7 @@
 
 #include <ctype.h>
 #include <dirent.h>
+#include <math.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -166,6 +167,23 @@ bool audiobookdb_open(const char *db_path) {
 	exec("CREATE TABLE IF NOT EXISTS AUDIOBOOK_BOOKMARKS("
 		 "id INTEGER PRIMARY KEY, book TEXT, file TEXT, pos REAL, label TEXT DEFAULT '', created INT DEFAULT 0)");
 	exec("CREATE INDEX IF NOT EXISTS AUDIOBOOK_BOOKMARKS_BOOK ON AUDIOBOOK_BOOKMARKS(book)");
+
+	// The Audiobookshelf sync state: which server snapshot the last
+	// acknowledged upload was, kept beside the books on the card so the
+	// outbox travels with it. The saved checkpoint itself stays the durable
+	// upload queue; this table only remembers which snapshot the server
+	// acknowledged. No SCHEMA_VERSION bump: the ALTERs are idempotent via
+	// exec_quiet and v4's outdated rescan path is untouched.
+	exec("CREATE TABLE IF NOT EXISTS AUDIOBOOK_ABS_SYNC("
+		 "book TEXT PRIMARY KEY, server TEXT NOT NULL, linked INT NOT NULL,"
+		 "file TEXT, seconds REAL, finished INT, attempted INT DEFAULT 0, failed INT DEFAULT 0)");
+	exec_quiet("ALTER TABLE AUDIOBOOK_TABLE ADD COLUMN resume_updated_ms INT DEFAULT 0");
+	exec_quiet("ALTER TABLE AUDIOBOOK_TABLE ADD COLUMN resume_revision INT DEFAULT 0");
+	if (exec_quiet("ALTER TABLE AUDIOBOOK_TABLE ADD COLUMN resume_completed INT DEFAULT 0"))
+		exec("UPDATE AUDIOBOOK_TABLE SET resume_completed=1 WHERE resume_pos=0 AND "
+			"EXISTS(SELECT 1 FROM AUDIOBOOK_FINISHED f WHERE f.path=AUDIOBOOK_TABLE.path)");
+	exec_quiet("ALTER TABLE AUDIOBOOK_ABS_SYNC ADD COLUMN revision INT DEFAULT -1");
+	exec_quiet("ALTER TABLE AUDIOBOOK_ABS_SYNC ADD COLUMN server_updated_ms INT DEFAULT 0");
 
 	int books = 0;
 	sqlite3_stmt *stmt = NULL;
@@ -543,12 +561,25 @@ static void write_position_locked(const char *book_path, const char *file, doubl
 	if (!db || (seq <= position_written && strcmp(book_path, position_written_book) == 0)) {
 		return;
 	}
+	struct timespec stamped;
+	clock_gettime(CLOCK_REALTIME, &stamped);
+	long long updated_ms = (long long)stamped.tv_sec * 1000 + stamped.tv_nsec / 1000000;
 	sqlite3_stmt *stmt = NULL;
-	if (sqlite3_prepare_v2(db, "UPDATE AUDIOBOOK_TABLE SET resume_file=?, resume_pos=?, last_played=? WHERE path=?", -1, &stmt, NULL) == SQLITE_OK) {
+	// The Audiobookshelf sync columns ride the same write: the listening
+	// event gets a wall-clock stamp and a revision, and resume_completed is
+	// cleared by any move that leaves the book unfinished. An identical
+	// checkpoint must not bump the revision, or an unchanged save would look
+	// like new listening to the sync worker.
+	if (sqlite3_prepare_v2(db, "UPDATE AUDIOBOOK_TABLE SET resume_file=?1, resume_pos=?2, last_played=?3,"
+						 "resume_updated_ms=?5,resume_revision=resume_revision+1,"
+						 "resume_completed=CASE WHEN ?2>0 THEN 0 ELSE resume_completed END "
+						 "WHERE path=?4 AND "
+						 "(resume_file IS NULL OR resume_file<>?1 OR resume_pos<>?2)", -1, &stmt, NULL) == SQLITE_OK) {
 		sqlite3_bind_text(stmt, 1, file, -1, SQLITE_TRANSIENT);
 		sqlite3_bind_double(stmt, 2, seconds);
 		sqlite3_bind_int64(stmt, 3, (sqlite3_int64)time(NULL));
 		sqlite3_bind_text(stmt, 4, book_path, -1, SQLITE_TRANSIENT);
+		sqlite3_bind_int64(stmt, 5, updated_ms);
 		sqlite3_step(stmt);
 		sqlite3_finalize(stmt);
 	}
@@ -698,6 +729,212 @@ bool audiobookdb_get_position(const char *book_path, char *file_out, size_t file
 	return found;
 }
 
+// ---------------------------------------------------------------------------
+// Audiobookshelf sync state (ported from the Sonix Audiobooks 0.x line)
+// ---------------------------------------------------------------------------
+
+// Snapshot the current local checkpoint and compare with the acknowledged one.
+#define ABS_CHECKPOINT_SELECT \
+	"SELECT a.path,COALESCE(a.resume_file,''),COALESCE(a.resume_pos,0)," \
+	"a.resume_completed," \
+	"s.book,COALESCE(s.server,''),COALESCE(s.linked,0)," \
+	"(s.file=a.resume_file AND s.seconds=a.resume_pos AND s.finished=" \
+	"a.resume_completed AND " \
+	"(s.revision=-1 OR s.revision=a.resume_revision)),COALESCE(s.failed,0)," \
+	"a.resume_updated_ms,a.resume_revision,COALESCE(s.server_updated_ms,0) " \
+	"FROM AUDIOBOOK_TABLE a LEFT JOIN AUDIOBOOK_ABS_SYNC s ON s.book=a.path "
+
+static void abs_checkpoint_read(sqlite3_stmt *stmt, audiobookdb_abs_checkpoint_t *out) {
+	memset(out, 0, sizeof(*out));
+	snprintf(out->book, sizeof(out->book), "%s", sqlite3_column_text(stmt, 0));
+	snprintf(out->file, sizeof(out->file), "%s", sqlite3_column_text(stmt, 1));
+	out->seconds = sqlite3_column_double(stmt, 2);
+	out->finished = sqlite3_column_int(stmt, 3) != 0;
+	out->known = sqlite3_column_type(stmt, 4) != SQLITE_NULL;
+	snprintf(out->server, sizeof(out->server), "%s", sqlite3_column_text(stmt, 5));
+	out->linked = sqlite3_column_int(stmt, 6) != 0;
+	out->synced = sqlite3_column_int(stmt, 7) != 0;
+	out->failed = sqlite3_column_int(stmt, 8) != 0;
+	out->sync_error = sqlite3_column_int(stmt, 8);
+	out->updated_ms = sqlite3_column_int64(stmt, 9);
+	out->revision = sqlite3_column_int64(stmt, 10);
+	out->server_updated_ms = sqlite3_column_int64(stmt, 11);
+	out->generation = generation;
+}
+
+bool audiobookdb_abs_get(const char *book, audiobookdb_abs_checkpoint_t *out) {
+	if (!book || !out) return false;
+	pthread_mutex_lock(&db_lock);
+	sqlite3_stmt *stmt = NULL;
+	bool found = false;
+	if (db && sqlite3_prepare_v2(db, ABS_CHECKPOINT_SELECT "WHERE a.path=?", -1, &stmt, NULL) == SQLITE_OK) {
+		sqlite3_bind_text(stmt, 1, book, -1, SQLITE_TRANSIENT);
+		if (sqlite3_step(stmt) == SQLITE_ROW) {
+			abs_checkpoint_read(stmt, out);
+			found = true;
+		}
+		sqlite3_finalize(stmt);
+	}
+	pthread_mutex_unlock(&db_lock);
+	return found;
+}
+
+bool audiobookdb_abs_next(const char *server, audiobookdb_abs_checkpoint_t *out) {
+	if (!server || !out) return false;
+	pthread_mutex_lock(&db_lock);
+	sqlite3_stmt *stmt = NULL;
+	bool found = false;
+	const char *sql = ABS_CHECKPOINT_SELECT
+		"WHERE a.last_played>0 AND a.resume_file<>'' AND (s.book IS NULL OR "
+		"(s.linked=1 AND s.server=? AND (s.file IS NULL OR s.file<>a.resume_file OR "
+		"s.seconds<>a.resume_pos OR s.revision<>a.resume_revision OR "
+		"s.finished<>a.resume_completed OR s.attempted<=?3 OR s.attempted>?4))) "
+		"AND (COALESCE(s.attempted,0)<=?2 OR s.attempted>?4) "
+		"ORDER BY COALESCE(s.attempted,0),a.last_played DESC LIMIT 1";
+	if (db && sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) == SQLITE_OK) {
+		sqlite3_bind_text(stmt, 1, server, -1, SQLITE_TRANSIENT);
+		sqlite3_bind_int64(stmt, 2, (sqlite3_int64)time(NULL) - 60);
+		sqlite3_bind_int64(stmt, 3, (sqlite3_int64)time(NULL) - 300);
+		sqlite3_bind_int64(stmt, 4, (sqlite3_int64)time(NULL) + 60);
+		if (sqlite3_step(stmt) == SQLITE_ROW) {
+			abs_checkpoint_read(stmt, out);
+			found = true;
+		}
+		sqlite3_finalize(stmt);
+	}
+	pthread_mutex_unlock(&db_lock);
+	return found;
+}
+
+void audiobookdb_abs_result(const audiobookdb_abs_checkpoint_t *sent, const char *server,
+						   bool linked, bool success, bool failed) {
+	if (!sent || !server) return;
+	pthread_mutex_lock(&db_lock);
+	sqlite3_stmt *stmt = NULL;
+	// A slow response must never acknowledge a replacement card's checkpoint.
+	const char *sql = "INSERT INTO AUDIOBOOK_ABS_SYNC(book,server,linked,file,seconds,finished,attempted,failed,revision,server_updated_ms) "
+		"VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?12,?13) ON CONFLICT(book) DO UPDATE SET server=excluded.server,linked=excluded.linked,"
+		"file=CASE WHEN ?9 THEN excluded.file ELSE file END,"
+		"seconds=CASE WHEN ?10 THEN excluded.seconds ELSE seconds END,"
+		"finished=CASE WHEN ?11 THEN excluded.finished ELSE finished END,attempted=excluded.attempted,failed=excluded.failed,"
+		"revision=CASE WHEN ?9 THEN excluded.revision ELSE revision END,"
+		"server_updated_ms=CASE WHEN ?9 THEN excluded.server_updated_ms ELSE server_updated_ms END";
+	if (db && generation == sent->generation && sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) == SQLITE_OK) {
+		sqlite3_bind_text(stmt, 1, sent->book, -1, SQLITE_TRANSIENT);
+		sqlite3_bind_text(stmt, 2, server, -1, SQLITE_TRANSIENT);
+		sqlite3_bind_int(stmt, 3, linked);
+		if (success) sqlite3_bind_text(stmt, 4, sent->file, -1, SQLITE_TRANSIENT);
+		else sqlite3_bind_null(stmt, 4);
+		sqlite3_bind_double(stmt, 5, sent->seconds);
+		sqlite3_bind_int(stmt, 6, sent->finished);
+		sqlite3_bind_int64(stmt, 7, (sqlite3_int64)time(NULL));
+		sqlite3_bind_int(stmt, 8, failed ? (sent->sync_error ? sent->sync_error : 1) : 0);
+		for (int i = 9; i <= 11; i++) sqlite3_bind_int(stmt, i, success);
+		sqlite3_bind_int64(stmt, 12, success ? sent->revision : -1);
+		sqlite3_bind_int64(stmt, 13, sent->server_updated_ms);
+		if (sqlite3_step(stmt) != SQLITE_DONE) fprintf(stderr, "audiobooks: sync acknowledgement could not be saved\n");
+		sqlite3_finalize(stmt);
+	}
+	pthread_mutex_unlock(&db_lock);
+}
+
+static void abs_change(const char *book, const char *sql) {
+	if (!book || !book[0]) return;
+	pthread_mutex_lock(&db_lock);
+	sqlite3_stmt *stmt = NULL;
+	if (db && sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) == SQLITE_OK) {
+		sqlite3_bind_text(stmt, 1, book, -1, SQLITE_TRANSIENT);
+		sqlite3_step(stmt);
+		sqlite3_finalize(stmt);
+	}
+	pthread_mutex_unlock(&db_lock);
+}
+
+void audiobookdb_abs_retry(const char *book) {
+	abs_change(book, "UPDATE AUDIOBOOK_ABS_SYNC SET attempted=0 WHERE book=?");
+}
+
+void audiobookdb_abs_reset(const char *book) {
+	abs_change(book, "DELETE FROM AUDIOBOOK_ABS_SYNC WHERE book=?");
+}
+
+void audiobookdb_abs_reconnect(void) {
+	pthread_mutex_lock(&db_lock);
+	if (db) exec("UPDATE AUDIOBOOK_ABS_SYNC SET attempted=0 WHERE linked=1");
+	pthread_mutex_unlock(&db_lock);
+}
+
+// Compare-and-swap the exact pre-request snapshot, including queued local edits.
+bool audiobookdb_abs_import(const audiobookdb_abs_checkpoint_t *expected, const char *server,
+	const char *file, double seconds, bool finished, long long updated_ms) {
+	if (!expected || !file || !file[0] || !isfinite(seconds) || seconds < 0 || updated_ms < 0) return false;
+	// Upstream's position writer owns queue_lock; a checkpoint still queued or
+	// in flight would race this compare-and-swap, so the import waits it out
+	// under the same lock instead of our old position_lock/position_accepting
+	// pair (upstream has neither).
+	pthread_mutex_lock(&queue_lock);
+	bool settled = !queued.pending && !queue_busy;
+	pthread_mutex_unlock(&queue_lock);
+	if (!settled) return false;
+	pthread_mutex_lock(&db_lock);
+	bool ok = false;
+	sqlite3_stmt *stmt = NULL;
+	if (!db || generation != expected->generation) goto done;
+	if (sqlite3_prepare_v2(db, ABS_CHECKPOINT_SELECT "WHERE a.path=?", -1, &stmt, NULL) != SQLITE_OK) goto done;
+	sqlite3_bind_text(stmt, 1, expected->book, -1, SQLITE_TRANSIENT);
+	audiobookdb_abs_checkpoint_t current;
+	bool found = sqlite3_step(stmt) == SQLITE_ROW;
+	if (found) abs_checkpoint_read(stmt, &current);
+	sqlite3_finalize(stmt);
+	stmt = NULL;
+	if (!found || current.revision != expected->revision || current.seconds != expected->seconds ||
+		current.finished != expected->finished || strcmp(current.file, expected->file) != 0) goto done;
+	if (sqlite3_exec(db, "BEGIN IMMEDIATE", NULL, NULL, NULL) != SQLITE_OK) goto done;
+	if (sqlite3_prepare_v2(db, "UPDATE AUDIOBOOK_TABLE SET resume_file=?,resume_pos=?,resume_updated_ms=?,"
+		"resume_revision=resume_revision+1,last_played=?,resume_completed=?6 WHERE path=?5", -1, &stmt, NULL) != SQLITE_OK) goto rollback;
+	sqlite3_bind_text(stmt, 1, file, -1, SQLITE_TRANSIENT);
+	sqlite3_bind_double(stmt, 2, seconds);
+	sqlite3_bind_int64(stmt, 3, updated_ms);
+	sqlite3_bind_int64(stmt, 4, updated_ms ? updated_ms / 1000 : time(NULL));
+	sqlite3_bind_text(stmt, 5, expected->book, -1, SQLITE_TRANSIENT);
+	sqlite3_bind_int(stmt, 6, finished);
+	if (sqlite3_step(stmt) != SQLITE_DONE) goto rollback;
+	sqlite3_finalize(stmt);
+	stmt = NULL;
+	const char *finish_sql = finished ? "INSERT OR REPLACE INTO AUDIOBOOK_FINISHED(path,finished_at) VALUES(?1,?2)" :
+		"DELETE FROM AUDIOBOOK_FINISHED WHERE path=?1";
+	if (sqlite3_prepare_v2(db, finish_sql, -1, &stmt, NULL) != SQLITE_OK) goto rollback;
+	sqlite3_bind_text(stmt, 1, expected->book, -1, SQLITE_TRANSIENT);
+	if (finished) sqlite3_bind_int64(stmt, 2, updated_ms / 1000);
+	if (sqlite3_step(stmt) != SQLITE_DONE) goto rollback;
+	sqlite3_finalize(stmt);
+	stmt = NULL;
+	if (sqlite3_prepare_v2(db, "INSERT OR REPLACE INTO AUDIOBOOK_ABS_SYNC"
+		"(book,server,linked,file,seconds,finished,attempted,failed,revision,server_updated_ms)"
+		"VALUES(?,?,1,?,?,?,?,0,?,?)", -1, &stmt, NULL) != SQLITE_OK) goto rollback;
+	sqlite3_bind_text(stmt, 1, expected->book, -1, SQLITE_TRANSIENT);
+	sqlite3_bind_text(stmt, 2, server, -1, SQLITE_TRANSIENT);
+	sqlite3_bind_text(stmt, 3, file, -1, SQLITE_TRANSIENT);
+	sqlite3_bind_double(stmt, 4, seconds);
+	sqlite3_bind_int(stmt, 5, finished);
+	sqlite3_bind_int64(stmt, 6, time(NULL));
+	sqlite3_bind_int64(stmt, 7, expected->revision + 1);
+	sqlite3_bind_int64(stmt, 8, updated_ms);
+	if (sqlite3_step(stmt) != SQLITE_DONE) goto rollback;
+	sqlite3_finalize(stmt);
+	stmt = NULL;
+	ok = sqlite3_exec(db, "COMMIT", NULL, NULL, NULL) == SQLITE_OK;
+	if (ok) goto done;
+rollback:
+	sqlite3_finalize(stmt);
+	stmt = NULL;
+	sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+done:
+	sqlite3_finalize(stmt);
+	pthread_mutex_unlock(&db_lock);
+	return ok;
+}
+
 // One or two primary-key lookups per track change, with nothing cached to go
 // stale: the file as a book of its own, then as a part of a folder book.
 bool audiobookdb_book_for_file(const char *file_path, char *book_out, size_t book_size) {
@@ -746,6 +983,15 @@ void audiobookdb_mark_finished(const char *path) {
 	if (db && sqlite3_prepare_v2(db, "INSERT OR REPLACE INTO AUDIOBOOK_FINISHED(path, finished_at) VALUES(?,?)", -1, &stmt, NULL) == SQLITE_OK) {
 		sqlite3_bind_text(stmt, 1, path, -1, SQLITE_TRANSIENT);
 		sqlite3_bind_int64(stmt, 2, (sqlite3_int64)time(NULL));
+		sqlite3_step(stmt);
+		sqlite3_finalize(stmt);
+	}
+	struct timespec now;
+	clock_gettime(CLOCK_REALTIME, &now);
+	if (db && sqlite3_prepare_v2(db, "UPDATE AUDIOBOOK_TABLE SET resume_completed=1,"
+		"resume_updated_ms=?,resume_revision=resume_revision+1 WHERE path=? AND resume_completed=0", -1, &stmt, NULL) == SQLITE_OK) {
+		sqlite3_bind_int64(stmt, 1, (long long)now.tv_sec * 1000 + now.tv_nsec / 1000000);
+		sqlite3_bind_text(stmt, 2, path, -1, SQLITE_TRANSIENT);
 		sqlite3_step(stmt);
 		sqlite3_finalize(stmt);
 	}
@@ -1344,11 +1590,14 @@ static void insert_book(const char *path, const book_t *b) {
 	if (sqlite3_prepare_v2(db,
 						   "INSERT OR REPLACE INTO AUDIOBOOK_TABLE"
 						   "(path,name,size,mtime,author,series,series_part,added,folder,summary,"
-						   "last_played,resume_file,resume_pos)"
+						   "last_played,resume_file,resume_pos,resume_updated_ms,resume_revision,resume_completed)"
 						   " VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,"
 						   "COALESCE((SELECT last_played FROM old_state WHERE path=?1),0),"
 						   "(SELECT resume_file FROM old_state WHERE path=?1),"
-						   "(SELECT resume_pos FROM old_state WHERE path=?1))",
+						   "(SELECT resume_pos FROM old_state WHERE path=?1),"
+						   "COALESCE((SELECT resume_updated_ms FROM old_state WHERE path=?1),0),"
+						   "COALESCE((SELECT resume_revision FROM old_state WHERE path=?1),0),"
+						   "COALESCE((SELECT resume_completed FROM old_state WHERE path=?1),0))",
 						   -1, &stmt, NULL) != SQLITE_OK) {
 		return;
 	}
@@ -1735,11 +1984,13 @@ static void *scan_thread_func(void *arg) {
 	// The rescan is wipe-and-refill, like the music library's, so books whose
 	// files are gone simply never come back. What must survive the wipe is
 	// where each book was left and when, so it is stashed in a temp table
-	// first and each insert copies its own back.
+	// first and each insert copies its own back. The Audiobookshelf sync
+	// columns ride along: they are columns of the same row, and losing them
+	// on a rescan would make an acknowledged book look unacknowledged again.
 	exec("CREATE TEMP TABLE IF NOT EXISTS old_state(path TEXT PRIMARY KEY, last_played INT, resume_file TEXT,"
-		 " resume_pos REAL)");
+		 " resume_pos REAL,resume_updated_ms INT,resume_revision INT,resume_completed INT)");
 	exec("DELETE FROM old_state");
-	exec("INSERT INTO old_state SELECT path, last_played, resume_file, resume_pos FROM AUDIOBOOK_TABLE"
+	exec("INSERT INTO old_state SELECT path, last_played, resume_file, resume_pos,resume_updated_ms,resume_revision,resume_completed FROM AUDIOBOOK_TABLE"
 		 " WHERE last_played > 0 OR resume_file IS NOT NULL");
 	exec("DELETE FROM AUDIOBOOK_TABLE");
 	exec("DELETE FROM AUDIOBOOK_PARTS");
