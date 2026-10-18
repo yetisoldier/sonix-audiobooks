@@ -2,10 +2,12 @@
 
 All entries here are specific to Sonix Audiobooks. The project also inherits ongoing work from [Sonix Player](https://github.com/Jepl4r/sonix-player); upstream changes are not repeated line-by-line here.
 
-## Rebase onto upstream 1.3.0 - 2026-10-17 (development line)
+## Sonix Audiobooks 0.4.0 - 2026-10-17
 
-Not a release: the fork's line is rebuilt on upstream sonix-player v1.3.0.
-Our 0.x history (0.1.0-0.3.0) remains the old base; this line supersedes it.
+First release of the fork's new line, rebuilt on upstream sonix-player v1.3.0.
+Firmware build identifier: `171020262008`. The 0.x history (0.1.0-0.3.0)
+remains available on `archive/0.x-line`; this line supersedes it.
+See `docs/releases/0.4.0.md` for package hashes and the device validation record.
 
 - Base changed to upstream v1.3.0. Everything the 0.x line patched by hand
   (playback/pairing/power hardening, background checkpoints, simulated-card
