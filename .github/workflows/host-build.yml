@@ -33,17 +33,17 @@ jobs:
         # LVGL 9.6.0 on first use.
         run: make host -j2
       - name: Exercise audiobook catalog and resume
-        working-directory: ..
+        working-directory: ${{ github.workspace }}
         env:
           SONIX_SMOKE_SKIP_BUILD: 1
         run: tools/audiobook-host-smoke.sh
       - name: Exercise the Audiobookshelf flow against the mock server
-        working-directory: ..
+        working-directory: ${{ github.workspace }}
         env:
           SONIX_SMOKE_SKIP_BUILD: 1
         run: tools/audiobookshelf-host-smoke.sh
       - name: Run the outbox and decision unit tests
-        working-directory: ..
+        working-directory: ${{ github.workspace }}
         run: bash tools/audiobookshelf-outbox-test.sh
       - name: Upload audiobook smoke artifacts
         if: always()
