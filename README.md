@@ -12,26 +12,18 @@ progress that syncs by itself once Wi-Fi is back.
 > do is upstream's own and is in **[FEATURES.md](FEATURES.md)**. What the fork
 > adds is described in **[AUDIOBOOK_EDITION.md](AUDIOBOOK_EDITION.md)**.
 
-## Install
+## Quick Start (Installation)
 
-1. Download `r1.upt` from the
-   **[latest release](https://github.com/yetisoldier/sonix-audiobooks/releases/latest)**.
-   This fork releases firmware for the original **HiBy R1** only.
-2. Charge the player **above 30%** and keep a copy of the official HiBy R1
-   firmware in case you want to return to stock.
-3. Copy the `.upt` file to the **root of the microSD card** and put the card
-   in the player.
-4. Start the update:
-   - **from the stock firmware** - use its firmware update from the microSD
-     card.
-   - **from Sonix Player** - Settings > System > Update firmware > From SD
-     card.
-5. Let it flash: it says "Upgrading...", then "Succeeded", and reboots by
-   itself. Remove or rename the `.upt` file afterwards so it cannot be
-   selected accidentally later.
+1. **Download** `r1.upt` from the **[latest release](https://github.com/yetisoldier/sonix-audiobooks/releases/latest)**.
+2. **Battery Check**: Charge the player **above 30%**.
+3. **Backup**: Keep a copy of the official HiBy R1 firmware for recovery.
+4. **Transfer**: Copy the `.upt` file to the **root of the microSD card**.
+5. **Update**:
+   - **From stock firmware**: Use its firmware update from the microSD card.
+   - **From Sonix Player**: Settings > System > Update firmware > From SD card.
+6. **Cleanup**: Remove or rename the `.upt` file afterwards.
 
-> **Going back to the stock firmware:** flash the original firmware from
-> HiBy's website the same way.
+> **Going back to stock:** Flash the original firmware from HiBy's website using the same procedure.
 
 ---
 
